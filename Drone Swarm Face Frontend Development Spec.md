@@ -101,15 +101,14 @@ The face is generated once at page load (target under 300 ms) as a set of 3D tar
 
 **Method (recommended): signed-distance or height-field head.**
 
-1. Define a base head as an ellipsoid. Half-axes (normalised, centre at the eye line, y up, z toward the viewer): width (x) 0.60, height (y) 1.0, depth (z) 0.55 — the reference head is taller than wide (measured width/height ≈ 0.59). Feature positions, measured from `reference_image.png` and expressed as a fraction of head height from the hair crest (0%) to the chin (100%): hairline 16%, eye line 49%, nose tip 68%, mouth line 82%; eye width 23% of face width, eye-centre separation 57%, nose width 26%, mouth width 39%. See `reference-image-notes.md` for the full measurement set.
+1. Define a base head as a face-shaped outline: a vertical half-height of 1.0 (hair crest y +1, chin y -1) and a depth of 0.55, with a half-width profile that is widest at the cheekbones (0.60) and narrows toward the forehead (0.52) and jaw/chin (down to 0.24) — so it is not a symmetric egg. Feature positions, measured from `reference_image.png` and expressed as a fraction of head height from the hair crest (0%) to the chin (100%): hairline 16%, eye line 49%, nose tip 68%, mouth line 82%; eye width 23% of face width, eye-centre separation 57%, nose width 26%, mouth width 39%. See `reference-image-notes.md` for the full measurement set.
 2. Add facial relief using smooth Gaussian bumps and dips:
    - brow ridge, eye sockets, nose bridge, nose tip and nostrils, cheekbones, upper and lower lip, chin, jaw line.
-3. Sample points on the front hemisphere of the surface using a Fibonacci-sphere or jittered grid distribution, then project onto the relief surface. Density is roughly uniform on the face.
+3. Sample points on the front surface using a jittered grid, then thin them by a density field that is denser on protruding features (nose bridge/tip, lips, cheekbones, jaw rim) and sparser in recesses (eye sockets, nostrils, mouth line) — shading by dot density, as in the reference, rather than drawn-on lines.
 4. Add secondary groups:
-   - **Hair:** a band of drones along the hairline and top of the head, coloured bottle green (see section 6), named `hair` in the attributes.
+   - **Hair:** wavy bottle-green strands flowing over the crown (see section 6), named `hair` in the attributes.
    - **Eyes:** a small dense cluster of drones tracing the eyelid rim around each eye socket. These are the blink group: a blink moves them toward the socket centre (with a slight dim), then back.
-   - **Feature accents:** denser drone lines layered over the base surface along the nose bridge and tip, the lip edges, the cheekbones and the jaw rim, so the face reads as a mesh with clearly defined features rather than a solid oval.
-5. Each point stores attributes: `target` (vec3), `group` (`face`, `hair`, `mouth`, `eye`), `mouthWeight` (0 to 1), `blinkWeight` (0 to 1, nonzero on eyelid drones), `seed` (random), `edgeFactor`.
+5. Each point stores attributes: `target` (vec3), `group` (`face`, `hair`, `mouth`, `eye`), `mouthWeight` (0 to 1), `blinkWeight` (0 to 1, nonzero on eyelid drones), `reserve` (0 or 1; reserve drones are hidden while dispersed), `seed` (random), `edgeFactor`.
 
 **Mouth region.** Points within an elliptical region around the lips get `mouthWeight` greater than 0. Weight is 1 at the lower lip and jaw, falling smoothly to 0 at the mouth boundary. Upper lip has a small weight so the mouth opens mostly by jaw drop.
 
@@ -117,12 +116,12 @@ The face is generated once at page load (target under 300 ms) as a set of 3D tar
 
 | Group | Count |
 | --- | --- |
-| Face surface (base + feature accents) | 3,200 |
-| Hair band | 700 |
-| Eyes | 200 |
-| Total | about 4,100 |
+| Face surface (density-shaded) | 2,240 |
+| Hair strands | 490 |
+| Eyes | 140 |
+| Total | about 2,870 |
 
-The total is a constant at the top of the file. A quality setting should scale it down on weak GPUs (see section 11).
+About 28.5% of drones are marked `reserve` and stay hidden while dispersed, so the start screen shows ~50% and the formed face ~70% of the previous density. The total is a constant at the top of the file. A quality setting should scale it down on weak GPUs (see section 11).
 
 **Design risk.** A procedural face can look generic or uncanny. Mitigation: build a small debug view (flat lit, no animation) early, and tune the relief parameters against `reference_image.png`. If the result is not good enough, the data source can be swapped for a mesh-sampled point set without changing anything else, because the rest of the system only consumes the `target` array.
 
@@ -133,12 +132,12 @@ All motion is computed in the vertex shader from uniforms, so JavaScript only up
 **Idle flight**
 
 - Each drone has a random start position inside a volume about the size of the viewport (and a depth range of about ±1.5 units).
-- Motion: slow Lissajous or curl-noise drift using the per-drone `seed`; speed roughly 0.05 to 0.15 units per second.
+- Motion: slow drift using the per-drone `seed` (independent per-drone frequencies); speed roughly 0.02 to 0.08 units per second.
 - Some depth variation so the swarm reads as 3D.
 
 **Formation (`FORMING`)**
 
-- Uniform `uForm` goes from 0 to 1 over about 4 seconds.
+- Uniform `uForm` goes from 0 to 1 over about 6 seconds.
 - Each drone starts at a staggered delay (0 to 1.2 s, derived from `seed` and optionally distance from the face centre, so the face assembles from the middle outward or randomly; to be chosen visually).
 - Position = `mix(freePosition, target, easeInOutCubic(t))`.
 - Add a small curved offset (perpendicular wobble) during travel so paths are not straight lines.
@@ -156,7 +155,7 @@ All motion is computed in the vertex shader from uniforms, so JavaScript only up
 **Dispersal (`DISPERSING`)**
 
 - Triggered by the Disperse control or `DroneFace.disperse()`; not available while `SPEAKING`.
-- `uForm` goes from 1 to 0 over about 3 seconds with a per-drone stagger (0 to 0.8 s). Position = `mix(target, driftPosition(time), easeInOutCubic(t))`.
+- `uForm` goes from 1 to 0 over about 4 seconds with a per-drone stagger (0 to 0.8 s). Position = `mix(target, driftPosition(time), easeInOutCubic(t))`.
 - The idle drift position is a pure function of time and each drone's `seed`, so drones leave the face and join the drift with no position jump. Re-forming uses the same blend in the other direction, starting from wherever each drone currently is.
 - Face orientation (yaw and pitch) eases back to 0 during the first second, and `mouthOpen` is forced to 0.
 - Repeated cycles must not accumulate offsets, stuck drones or memory growth.
@@ -199,7 +198,7 @@ All motion is computed in the vertex shader from uniforms, so JavaScript only up
 
 **Ambient sound.** A quiet, looping ambient soundscape (a low hum with a soft shimmer, suggesting a drone swarm) plays after the first press of Start, and the user can turn it off and on at any time.
 
-- **Source:** generated in the page with the Web Audio API — a soft, slowly-evolving chord pad of detuned oscillators (no noise). No audio file is embedded, so the page stays offline and small. A short embedded loop is the fallback if the generated sound is not good enough.
+- **Source:** generated in the page with the Web Audio API — a soft, morphing two-chord pad of detuned oscillators with a slow filter sweep (no noise). No audio file is embedded, so the page stays offline and small. A short embedded loop is the fallback if the generated sound is not good enough.
 - **Start:** begins on the Start press (browsers require a user gesture) and fades in over about 2 seconds. It keeps playing through all states, with a gentle swell during `FORMING` and `DISPERSING`.
 - **Control:** the sound toggle (section 5) switches it off and on. Muting and unmuting use a gain ramp of about 0.3 seconds to avoid clicks. The default is on, and the choice is remembered between visits where the browser allows storage (guarded with try/catch).
 - **Ducking:** while `SPEAKING`, the ambient level drops by about 6 dB so speech stays clear, and returns over about 0.5 seconds after speech ends.
@@ -236,14 +235,14 @@ window.DroneFace = {
 - The service may also return audio as a stream (for example, chunks over a WebSocket). This choice is not made yet. The frontend accepts both through one interface: files go through `attachAudio`, `speakFromUrl` or `speak`, streams through `attachStream`. All feed the same analyser, so the lip-sync code does not change.
 - v1 builds and tests complete-file playback. Streaming playback (an `AudioWorklet` fed with PCM chunks is the suggested method) is a follow-up task once the backend choice is made.
 
-**v1 test harness.** A hidden or developer-only control (for example, press `T`) that plays a short test tone or an embedded audio clip so the mouth can be tested without a backend. A file-picker button (shown only with `?debug=1` in the URL) for loading a local audio file is recommended.
+**v1 test harness.** The **Generate voice** button and `DroneFace.setMouth(open, width)` let the mouth be tested without a backend. A file-picker button (shown only with `?debug=1` in the URL) for loading a local audio file is recommended.
 
 ## 12. Performance and compatibility
 
 | Item | Target |
 | --- | --- |
 | Frame rate | 60 fps on a mid-range laptop with integrated graphics; 30 fps minimum on a recent phone |
-| Drone count | About 4,100 default; auto-reduce to about 2,050 if the first 60 frames average under 40 fps |
+| Drone count | About 2,870 default; auto-reduce to about 1,450 if the first 60 frames average under 40 fps |
 | Device pixel ratio | Capped at 2 |
 | Browsers | Current Chrome, Edge, Firefox, Safari (WebGL2) |
 | File size | Under about 500 KB total |

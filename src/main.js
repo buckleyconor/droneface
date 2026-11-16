@@ -13,15 +13,16 @@ import {
 const CONFIG = {
   // drone counts
   counts: {
-    face: 3200,   // base surface + feature accents (no neck/ears)
-    hair: 700,    // bottle-green band along the hairline
-    eyes: 200,    // eyelid rims (blink group)
+    face: 2240,   // base surface (density-shaded, no neck/ears)
+    hair: 490,    // wavy bottle-green strands over the crown
+    eyes: 140,    // eyelid rims (blink group)
   },
   reducedCounts: {
-    face: 1600,
-    hair: 350,
-    eyes: 100,
+    face: 1120,
+    hair: 245,
+    eyes: 70,
   },
+  reserveFraction: 0.285,  // share of drones hidden while dispersed (start screen)
 
   // head ellipsoid half-axes (normalised, centre at eye line, y up, z forward)
   head: { rx: 0.60, ry: 1.0, rz: 0.55 },
@@ -34,8 +35,8 @@ const CONFIG = {
   background: '#02060d',
 
   // formation / dispersal timing (seconds)
-  formDuration: 4.0,
-  disperseDuration: 3.0,
+  formDuration: 6.0,
+  disperseDuration: 4.0,
   formStagger: 0.25,      // fraction of duration a drone can lag (shader)
 
   // orientation limits (degrees) and feel
@@ -103,29 +104,29 @@ const FACE = {
 
   // relief: Gaussian bumps/dips {cx, cy, sx, sy, amp} (amp + = out toward viewer)
   relief: [
-    // eye sockets (deeper)
-    { cx: -0.342, cy: 0.02, sx: 0.095, sy: 0.048, amp: -0.13 },
-    { cx:  0.342, cy: 0.02, sx: 0.095, sy: 0.048, amp: -0.13 },
+    // eye sockets (deep)
+    { cx: -0.342, cy: 0.02, sx: 0.095, sy: 0.048, amp: -0.16 },
+    { cx:  0.342, cy: 0.02, sx: 0.095, sy: 0.048, amp: -0.16 },
     // brow ridge (subtle shadow band above the eyes)
-    { cx: -0.342, cy: 0.13, sx: 0.13, sy: 0.05, amp: -0.04 },
-    { cx:  0.342, cy: 0.13, sx: 0.13, sy: 0.05, amp: -0.04 },
-    // nose bridge + tip (more prominent)
-    { cx: 0.0, cy: -0.10, sx: 0.085, sy: 0.17, amp: 0.14 },
-    { cx: 0.0, cy: -0.42, sx: 0.09, sy: 0.09, amp: 0.19 },
-    // nostrils (deeper)
-    { cx: -0.06, cy: -0.47, sx: 0.035, sy: 0.03, amp: -0.07 },
-    { cx:  0.06, cy: -0.47, sx: 0.035, sy: 0.03, amp: -0.07 },
-    // cheekbones (more defined)
-    { cx: -0.30, cy: -0.05, sx: 0.13, sy: 0.10, amp: 0.08 },
-    { cx:  0.30, cy: -0.05, sx: 0.13, sy: 0.10, amp: 0.08 },
+    { cx: -0.342, cy: 0.13, sx: 0.13, sy: 0.05, amp: -0.05 },
+    { cx:  0.342, cy: 0.13, sx: 0.13, sy: 0.05, amp: -0.05 },
+    // nose bridge + tip (clearly protruding)
+    { cx: 0.0, cy: -0.10, sx: 0.085, sy: 0.17, amp: 0.17 },
+    { cx: 0.0, cy: -0.42, sx: 0.09, sy: 0.09, amp: 0.23 },
+    // nostrils (deep)
+    { cx: -0.06, cy: -0.47, sx: 0.035, sy: 0.03, amp: -0.08 },
+    { cx:  0.06, cy: -0.47, sx: 0.035, sy: 0.03, amp: -0.08 },
+    // cheekbones (defined)
+    { cx: -0.30, cy: -0.05, sx: 0.13, sy: 0.10, amp: 0.11 },
+    { cx:  0.30, cy: -0.05, sx: 0.13, sy: 0.10, amp: 0.11 },
     // lips (fuller, with a clear mouth line)
-    { cx: 0.0, cy: -0.54, sx: 0.11, sy: 0.032, amp: 0.09 },
-    { cx: 0.0, cy: -0.71, sx: 0.09, sy: 0.038, amp: 0.08 },
-    { cx: 0.0, cy: -0.63, sx: 0.11, sy: 0.014, amp: -0.045 }, // mouth line dip
+    { cx: 0.0, cy: -0.54, sx: 0.11, sy: 0.032, amp: 0.11 },
+    { cx: 0.0, cy: -0.71, sx: 0.09, sy: 0.038, amp: 0.10 },
+    { cx: 0.0, cy: -0.63, sx: 0.11, sy: 0.014, amp: -0.055 }, // mouth line dip
     // chin + jawline
-    { cx: 0.0, cy: -0.90, sx: 0.12, sy: 0.10, amp: 0.08 },
-    { cx: -0.26, cy: -0.74, sx: 0.09, sy: 0.10, amp: 0.04 },
-    { cx:  0.26, cy: -0.74, sx: 0.09, sy: 0.10, amp: 0.04 },
+    { cx: 0.0, cy: -0.90, sx: 0.12, sy: 0.10, amp: 0.10 },
+    { cx: -0.26, cy: -0.74, sx: 0.09, sy: 0.10, amp: 0.05 },
+    { cx:  0.26, cy: -0.74, sx: 0.09, sy: 0.10, amp: 0.05 },
   ],
 };
 
@@ -141,9 +142,30 @@ function reliefZ(x, y) {
   return z;
 }
 
-// front surface z (ellipsoid + relief); null if outside the head outline
+// face-shaped half-width profile: widest at the cheekbones, narrow at jaw/chin
+function headHalfWidth(y) {
+  const P = [
+    { y:  1.00, w: 0.40 },
+    { y:  0.55, w: 0.52 },
+    { y:  0.05, w: 0.60 },
+    { y: -0.25, w: 0.58 },
+    { y: -0.55, w: 0.48 },
+    { y: -0.82, w: 0.38 },
+    { y: -1.00, w: 0.24 },
+  ];
+  for (let i = 0; i < P.length - 1; i++) {
+    if (y <= P[i].y && y >= P[i + 1].y) {
+      const t = (P[i].y - y) / (P[i].y - P[i + 1].y);
+      return P[i].w + t * (P[i + 1].w - P[i].w);
+    }
+  }
+  return P[P.length - 1].w;
+}
+
+// front surface z (face-shaped outline + relief); null if outside the head
 function surfaceZ(x, y) {
-  const a = (x * x) / (rx * rx) + (y * y) / (ry * ry);
+  const w = headHalfWidth(y);
+  const a = (x * x) / (w * w) + (y * y) / (ry * ry);
   if (a >= 1.0) return null;
   return rz * Math.sqrt(1.0 - a) + reliefZ(x, y);
 }
@@ -162,7 +184,7 @@ function surfaceNormal(x, y) {
 
 // brightness multiplier from relief (protrusions bright, recesses dark)
 function reliefShade(x, y) {
-  return Math.max(0.35, Math.min(1.4, 1.0 + reliefZ(x, y) * 4.0));
+  return Math.max(0.3, Math.min(1.5, 1.0 + reliefZ(x, y) * 5.0));
 }
 
 function groupOf(x, y) {
@@ -192,48 +214,55 @@ function mouthWideDelta(x, y, w) {
   return { x: x * 0.12 * w, y: 0, z: 0 };
 }
 
-// stratified (jittered grid) sampling of the full face surface
-function sampleSurfaceGrid(count) {
-  const cellArea = (Math.PI * rx * ry) / count;
-  const cell = Math.sqrt(cellArea);
-  const nx = Math.max(1, Math.ceil((2 * rx) / cell));
-  const ny = Math.max(1, Math.ceil((2 * ry) / cell));
+function gauss(x, y, cx, cy, sx, sy) {
+  const dx = (x - cx) / sx, dy = (y - cy) / sy;
+  return Math.exp(-0.5 * (dx * dx + dy * dy));
+}
+
+// density field: denser on protruding features, sparser in recesses (shading
+// by dot density, like the reference) rather than drawn-on lines
+function densityWeight(x, y) {
+  let d = 1.0;
+  d += 1.2 * gauss(x, y, 0, -0.25, 0.06, 0.20);      // nose bridge
+  d += 1.4 * gauss(x, y, 0, -0.43, 0.08, 0.06);      // nose tip
+  d -= 0.9 * gauss(x, y, -0.342, 0.02, 0.10, 0.055); // eye sockets
+  d -= 0.9 * gauss(x, y,  0.342, 0.02, 0.10, 0.055);
+  d += 0.7 * gauss(x, y, 0, -0.54, 0.12, 0.025);     // upper lip
+  d += 0.7 * gauss(x, y, 0, -0.71, 0.10, 0.025);     // lower lip
+  d -= 0.6 * gauss(x, y, 0, -0.63, 0.11, 0.013);     // mouth line
+  d += 0.6 * gauss(x, y, -0.30, -0.06, 0.07, 0.05);  // cheekbones
+  d += 0.6 * gauss(x, y,  0.30, -0.06, 0.07, 0.05);
+  d -= 0.5 * gauss(x, y, -0.06, -0.48, 0.03, 0.025); // nostrils
+  d -= 0.5 * gauss(x, y,  0.06, -0.48, 0.03, 0.025);
+  const w = headHalfWidth(y);
+  const r = Math.sqrt((x * x) / (w * w) + (y * y) / (ry * ry));
+  if (y < -0.5) d += 0.8 * Math.exp(-0.5 * Math.pow((r - 0.94) / 0.05, 2)); // jaw rim
+  return Math.max(0.25, Math.min(2.0, d));
+}
+
+// stratified sampling over the face outline, thinned by density (denser on
+// features, sparser in recesses)
+function sampleFace(count) {
+  const faceArea = 1.35;
+  const cell = Math.sqrt(faceArea / (count * 1.3));
+  const nx = Math.max(2, Math.ceil((2 * 0.62) / cell));
+  const ny = Math.max(2, Math.ceil((2 * ry) / cell));
   const pts = [];
   for (let iy = 0; iy < ny && pts.length < count; iy++) {
     for (let ix = 0; ix < nx && pts.length < count; ix++) {
-      const x = -rx + (ix + Math.random()) * (2 * rx / nx);
+      const x = -0.62 + (ix + Math.random()) * (2 * 0.62 / nx);
       const y = -ry + (iy + Math.random()) * (2 * ry / ny);
-      const z = surfaceZ(x, y);
-      if (z == null) continue;
-      pts.push([x, y, z]);
+      if (surfaceZ(x, y) == null) continue;
+      if (Math.random() > densityWeight(x, y) / 2.0) continue;
+      pts.push([x, y]);
     }
   }
-  // top up with rejection sampling if the grid came up short
   while (pts.length < count) {
-    const ang = Math.random() * 2 * Math.PI;
-    const r = Math.sqrt(Math.random());
-    const x = rx * r * Math.cos(ang);
-    const y = ry * r * Math.sin(ang);
-    const z = surfaceZ(x, y);
-    if (z == null) continue;
-    pts.push([x, y, z]);
-  }
-  return pts;
-}
-
-// rejection sampling, uniform in ellipse area, for filtered regions (hair cap)
-function sampleSurfaceRandom(count, filter) {
-  const pts = [];
-  const maxIter = count * 40;
-  for (let i = 0; i < maxIter && pts.length < count; i++) {
-    const ang = Math.random() * 2 * Math.PI;
-    const r = Math.sqrt(Math.random());
-    const x = rx * r * Math.cos(ang);
-    const y = ry * r * Math.sin(ang);
-    if (filter && !filter(x, y)) continue;
-    const z = surfaceZ(x, y);
-    if (z == null) continue;
-    pts.push([x, y, z]);
+    const x = (Math.random() * 2 - 1) * 0.62;
+    const y = (Math.random() * 2 - 1) * ry;
+    if (surfaceZ(x, y) == null) continue;
+    if (Math.random() > densityWeight(x, y) / 2.0) continue;
+    pts.push([x, y]);
   }
   return pts;
 }
@@ -242,8 +271,8 @@ function buildPoints(counts) {
   const pts = [];
   const Z = () => ({ x: 0, y: 0, z: 0 });
 
-  const push = (x, y, z, n, group, shade, mo, mw2, blink) => {
-    pts.push({ p: [x, y, z], n, group, shade, mo, mw2, blink });
+  const push = (x, y, z, n, group, shade, mo, mw2, blink, reserve) => {
+    pts.push({ p: [x, y, z], n, group, shade, mo, mw2, blink, reserve });
   };
 
   // project a face-plane point onto the surface and push it with all attributes
@@ -254,66 +283,33 @@ function buildPoints(counts) {
     const shade = reliefShade(x, y);
     const g = (group == null) ? groupOf(x, y) : group;
     const mw = mouthWeight(x, y);
-    push(x, y, z, n, g, shade, mouthOpenDelta(x, y, mw), mouthWideDelta(x, y, mw), Z());
+    const reserve = Math.random() < CONFIG.reserveFraction;
+    push(x, y, z, n, g, shade, mouthOpenDelta(x, y, mw), mouthWideDelta(x, y, mw), Z(), reserve);
     return true;
   };
 
-  // 1. base face surface (uniform lattice; feature lines layered on top)
-  const FEATURE_BUDGET = 660;
-  for (const [x, y] of sampleSurfaceGrid(Math.max(400, counts.face - FEATURE_BUDGET))) {
+  // 1. face surface (density-shaded; no drawn feature lines)
+  for (const [x, y] of sampleFace(counts.face)) {
     pushSurface(x, y);
   }
 
-  // 2. explicit feature lines — denser/crisper where the face should read as a face
-  // nose bridge (vertical stripe) and nose tip ring
-  for (let i = 0; i < 90; i++) {
-    const y = -0.06 - (i / 89) * 0.36;
-    pushSurface(0, y, 0);
-  }
-  for (let i = 0; i < 60; i++) {
-    const a = (i / 60) * Math.PI * 2;
-    pushSurface(Math.cos(a) * 0.085, -0.43 + Math.sin(a) * 0.05, 0);
-  }
-  // lip edges (upper and lower)
-  for (let i = 0; i < 80; i++) {
-    const x = ((i / 79) - 0.5) * 2 * FACE.mouthHalfW;
-    pushSurface(x, -0.52, 3);
-  }
-  for (let i = 0; i < 80; i++) {
-    const x = ((i / 79) - 0.5) * 2 * FACE.mouthHalfW;
-    pushSurface(x, -0.75, 3);
-  }
-  // cheekbone highlights (two arcs)
-  for (let i = 0; i < 60; i++) {
-    const a = -0.5 + (i / 59) * 0.85;
-    pushSurface(-0.30 + Math.cos(a) * 0.11, -0.06 + Math.sin(a) * 0.05, 0);
-    pushSurface( 0.30 - Math.cos(a) * 0.11, -0.06 + Math.sin(a) * 0.05, 0);
-  }
-  // jaw/chin rim (lower silhouette)
-  for (let i = 0; i < 130; i++) {
-    const x = ((i / 129) - 0.5) * 2 * rx * 0.80;
-    const a = (x * x) / (rx * rx);
-    if (a >= 0.72) continue;
-    pushSurface(x, -Math.sqrt(1 - a) * ry * 0.995, 0);
-  }
-  // brow arcs
-  for (let i = 0; i < 50; i++) {
-    const a = Math.PI * (0.1 + 0.8 * (i / 49));
-    pushSurface(-0.342 + Math.cos(a) * 0.115, 0.14 - Math.sin(a) * 0.045, 0);
-    pushSurface( 0.342 - Math.cos(a) * 0.115, 0.14 - Math.sin(a) * 0.045, 0);
+  // 2. hair: wavy bottle-green strands flowing over the crown
+  const hairRows = 15;
+  const perRow = Math.ceil((counts.hair * 1.15) / hairRows);
+  for (let r = 0; r < hairRows; r++) {
+    const y = 0.56 + (r / (hairRows - 1)) * 0.42;      // 0.56 .. 0.98
+    const surfaceW = headHalfWidth(y) * Math.sqrt(Math.max(0, 1 - (y * y) / (ry * ry)));
+    const amp = surfaceW * (0.08 + 0.10 * (r / hairRows));
+    const freq = 2.0 + 0.4 * Math.sin(r * 1.1);
+    const phase = r * 1.7;
+    for (let i = 0; i < perRow; i++) {
+      const t = (i / (perRow - 1)) - 0.5;              // -0.5 .. 0.5
+      const x = t * 2 * surfaceW * 0.92 + amp * Math.sin(t * 2 * Math.PI * freq + phase);
+      pushSurface(x, y, 1);
+    }
   }
 
-  // 3. hair: bottle-green band along the hairline/top of the head
-  const hair = sampleSurfaceRandom(counts.hair, (x, y) => {
-    const e = (x * x) / (rx * rx) + (y * y) / (ry * ry);
-    return y >= 0.52 && e >= 0.80;
-  });
-  for (const [x, y, z] of hair) {
-    const n = surfaceNormal(x, y);
-    push(x, y, z, n, 1, reliefShade(x, y), Z(), Z(), Z());
-  }
-
-  // 4. eyes: eyelid rim ring around each socket (the blink group)
+  // 3. eyes: eyelid rim ring around each socket (the blink group)
   const eyeRim = Math.floor(counts.eyes / 2);
   for (let e = 0; e < 2; e++) {
     const ex = (e === 0 ? -1 : 1) * FACE.eyeX;
@@ -324,13 +320,13 @@ function buildPoints(counts) {
       const z = surfaceZ(x, y);
       if (z == null) continue;
       const n = surfaceNormal(x, y);
-      // blink: move toward the socket centre (on the surface)
       const cx = ex, cy = FACE.eyeLine, cz = surfaceZ(ex, cy) ?? 0;
       const dx = cx - x, dy = cy - y, dz = cz - z;
       pts.push({
         p: [x, y, z], n, group: 4, shade: 0.8,
         mo: { x: 0, y: 0, z: 0 }, mw2: { x: 0, y: 0, z: 0 },
         blink: { x: dx * 0.55, y: dy * 0.55, z: dz * 0.55 },
+        reserve: false,
       });
     }
   }
@@ -350,6 +346,7 @@ function makeGeometry(pts) {
   const mw = new Float32Array(n * 3);
   const blink = new Float32Array(n * 3);
   const seed = new Float32Array(n);
+  const reserve = new Float32Array(n);
 
   for (let i = 0; i < n; i++) {
     const q = pts[i];
@@ -364,6 +361,7 @@ function makeGeometry(pts) {
     mw.set([mwD.x, mwD.y, mwD.z], i * 3);
     blink.set([blD.x, blD.y, blD.z], i * 3);
     seed[i] = Math.random();
+    reserve[i] = q.reserve ? 1 : 0;
   }
 
   const g = new BufferGeometry();
@@ -375,6 +373,7 @@ function makeGeometry(pts) {
   g.setAttribute('aMouthWide', new BufferAttribute(mw, 3));
   g.setAttribute('aBlink', new BufferAttribute(blink, 3));
   g.setAttribute('aSeed', new BufferAttribute(seed, 1));
+  g.setAttribute('aReserve', new BufferAttribute(reserve, 1));
   return g;
 }
 
@@ -396,6 +395,7 @@ uniform mat4 uModel;
 attribute float aGroup;
 attribute float aShade;
 attribute float aSeed;
+attribute float aReserve;
 attribute vec3 aMouthOpen;
 attribute vec3 aMouthWide;
 attribute vec3 aBlink;
@@ -421,13 +421,13 @@ vec3 drift(float seed, float t) {
   float h4 = rand01(seed * 61.111);
   float h5 = rand01(seed * 23.669);
 
-  // per-drone frequencies (rad/s): slow drift, roughly 0.05..0.17 units/s
-  float fx = 0.05 + 0.12 * h0;
-  float fy = 0.05 + 0.12 * h1;
-  float fz = 0.04 + 0.10 * h2;
-  float gx = 0.02 + 0.05 * h3;
-  float gy = 0.02 + 0.05 * h4;
-  float gz = 0.015 + 0.04 * h5;
+  // per-drone frequencies (rad/s): slow drift, roughly 0.02..0.08 units/s
+  float fx = 0.025 + 0.06 * h0;
+  float fy = 0.025 + 0.06 * h1;
+  float fz = 0.02 + 0.05 * h2;
+  float gx = 0.01 + 0.025 * h3;
+  float gy = 0.01 + 0.025 * h4;
+  float gz = 0.008 + 0.02 * h5;
 
   vec3 p;
   p.x = 0.95 * sin(fx * t + h0 * 6.2831853) + 0.50 * sin(gx * t + h3 * 6.2831853);
@@ -466,7 +466,9 @@ void main() {
   vSeed = aSeed;
 
   float size = uPointScale / max(0.1, -viewPos.z);
-  gl_PointSize = min(size, 48.0);
+  // reserve drones only appear once the face starts forming (start screen ~50%)
+  float vis = (aReserve > 0.5) ? smoothstep(0.05, 0.6, uForm) : 1.0;
+  gl_PointSize = min(size * vis, 48.0);
 }
 `;
 
@@ -744,43 +746,61 @@ function buildAmbient() {
   master.gain.value = 0;
   const duck = audioCtx.createGain();
   duck.gain.value = 1;
-  master.connect(duck).connect(audioCtx.destination); // NOT through analyser
 
-  // a soft, slowly-evolving chord pad (open fifths/octaves, no noise)
-  const notes = [110.0, 164.81, 220.0, 329.63, 440.0]; // A2 E3 A3 E4 A4
-  const detunes = [0, +1.2, -0.8, +0.5, -1.0];
-  const levels = [0.15, 0.10, 0.085, 0.05, 0.025];
+  // gentle lowpass; cutoff slowly sweeps for an evolving timbre
+  const lp = audioCtx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 1200;
+  lp.Q.value = 0.4;
+  master.connect(lp).connect(duck).connect(audioCtx.destination);
 
-  notes.forEach((freq, idx) => {
+  const voice = (freq, detune, level, out) => {
     const osc = audioCtx.createOscillator();
     osc.type = 'triangle';
     osc.frequency.value = freq;
-    osc.detune.value = detunes[idx];
-
+    osc.detune.value = detune;
     const g = audioCtx.createGain();
-    g.gain.value = levels[idx];
-
-    // slow independent LFO on each voice's gain -> breathing, evolving pad
-    const lfo = audioCtx.createOscillator();
-    lfo.type = 'sine';
-    lfo.frequency.value = 0.04 + idx * 0.017;
-    const lfoG = audioCtx.createGain();
-    lfoG.gain.value = levels[idx] * 0.45;
-    lfo.connect(lfoG).connect(g.gain);
-
-    osc.connect(g).connect(master);
+    g.gain.value = level;
+    osc.connect(g).connect(out);
     osc.start();
-    lfo.start();
-  });
+  };
+
+  // two chords slowly crossfade (Am-ish -> C-ish), so it isn't one chord looping
+  const chordA = [110.0, 164.81, 220.0, 261.63, 329.63];
+  const chordB = [130.81, 196.0, 261.63, 329.63, 392.0];
+  const gA = audioCtx.createGain(); gA.gain.value = 0.5;
+  const gB = audioCtx.createGain(); gB.gain.value = 0.5;
+  const lvlA = [0.14, 0.10, 0.09, 0.06, 0.04];
+  const lvlB = [0.13, 0.09, 0.08, 0.055, 0.035];
+  chordA.forEach((f, i) => voice(f, i * 1.1, lvlA[i], gA));
+  chordB.forEach((f, i) => voice(f, -i * 0.9, lvlB[i], gB));
+
+  // out-of-phase LFO crossfades gA and gB over ~22 s
+  const breath = audioCtx.createGain(); breath.gain.value = 1.0;
+  gA.connect(breath); gB.connect(breath); breath.connect(master);
+
+  const xf = audioCtx.createOscillator(); xf.type = 'sine'; xf.frequency.value = 0.045;
+  const xfA = audioCtx.createGain(); xfA.gain.value = 0.5;
+  const xfB = audioCtx.createGain(); xfB.gain.value = -0.5;
+  xf.connect(xfA).connect(gA.gain);
+  xf.connect(xfB).connect(gB.gain);
+  xf.start();
+
+  // slow filter sweep + gentle amplitude breathing
+  const sweep = audioCtx.createOscillator(); sweep.type = 'sine'; sweep.frequency.value = 0.035;
+  const sweepG = audioCtx.createGain(); sweepG.gain.value = 600;
+  sweep.connect(sweepG).connect(lp.frequency);
+  sweep.start();
+
+  const br = audioCtx.createOscillator(); br.type = 'sine'; br.frequency.value = 0.07;
+  const brG = audioCtx.createGain(); brG.gain.value = 0.12;
+  br.connect(brG).connect(breath.gain);
+  br.start();
 
   // very quiet high sparkle with slow vibrato (gentle shimmer, not noise)
-  const hi = audioCtx.createOscillator();
-  hi.type = 'sine';
-  hi.frequency.value = 880;
-  const hiG = audioCtx.createGain();
-  hiG.gain.value = 0.006;
-  const vib = audioCtx.createOscillator();
-  vib.type = 'sine'; vib.frequency.value = 0.08;
+  const hi = audioCtx.createOscillator(); hi.type = 'sine'; hi.frequency.value = 880;
+  const hiG = audioCtx.createGain(); hiG.gain.value = 0.006;
+  const vib = audioCtx.createOscillator(); vib.type = 'sine'; vib.frequency.value = 0.08;
   const vibG = audioCtx.createGain(); vibG.gain.value = 14;
   vib.connect(vibG).connect(hi.frequency);
   hi.connect(hiG).connect(master);
@@ -1044,8 +1064,12 @@ function makeInternals() {
     getCounts() {
       if (!geometry) return null;
       const g = geometry.getAttribute('aGroup');
-      const c = { face: 0, hair: 0, neck: 0, mouth: 0, eye: 0, total: g.count };
-      for (let i = 0; i < g.count; i++) c[GROUP_NAMES[g.getX(i)]]++;
+      const r = geometry.getAttribute('aReserve');
+      const c = { face: 0, hair: 0, neck: 0, mouth: 0, eye: 0, reserve: 0, total: g.count };
+      for (let i = 0; i < g.count; i++) {
+        c[GROUP_NAMES[g.getX(i)]]++;
+        if (r && r.getX(i) > 0.5) c.reserve++;
+      }
       return c;
     },
     geometryStats() {
@@ -1222,11 +1246,6 @@ function initUI() {
 
   updateUI();
 
-  // test harness: press T plays a short synthetic speech envelope
-  window.addEventListener('keydown', (e) => {
-    if (e.key === 'T' || e.key === 't') { e.preventDefault(); playTestTone(); }
-  });
-
   // debug file picker (?debug=1)
   if (/[?&]debug=1/.test(location.search)) {
     const input = document.createElement('input');
@@ -1243,26 +1262,6 @@ function initUI() {
     });
     document.body.appendChild(input);
   }
-}
-
-function playTestTone() {
-  ensureAudio();
-  if (!audioCtx || !analyser) return;
-  const dur = 1.6;
-  const buf = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate * dur), audioCtx.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < d.length; i++) {
-    const t = i / audioCtx.sampleRate;
-    // AM "speech-like" envelope: bursts of band-limited-ish noise
-    const env = 0.5 + 0.5 * Math.sin(2 * Math.PI * 4.0 * t - Math.PI / 2);
-    d[i] = (Math.random() * 2 - 1) * env * 0.6;
-  }
-  const src = audioCtx.createBufferSource();
-  src.buffer = buf;
-  src.connect(analyser);
-  src.onended = () => endSpeech();
-  src.start();
-  beginSpeech();
 }
 
 /* ============================================================================

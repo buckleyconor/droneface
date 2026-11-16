@@ -1,13 +1,14 @@
 # Drone Swarm Face
 
-A single offline HTML file that renders a talking-head face made of ~4,100
+A single offline HTML file that renders a talking-head face made of ~2,870
 glowing turquoise drones (three.js / WebGL). Drones drift when idle; press
-**Start** and they fly into a 3D face you can turn by dragging. The face is a
-feature-highlighting mesh (denser lines on the nose, lips, cheekbones and jaw),
-with a bottle-green hair band. The mouth moves with audio amplitude and spectral
-brightness (or a synthetic demo voice), over a gentle futuristic chord pad.
-Includes a text box + **Generate voice** button that speaks via the browser's
-`speechSynthesis` until a real TTS endpoint is wired in (qwen3-tts style).
+**Start** and they fly into a 3D face you can turn by dragging. The face is
+shaded by dot density (denser on the nose, lips, cheekbones and jaw rim, sparser
+in the sockets) with wavy bottle-green hair strands over the crown. The mouth
+moves with audio amplitude and spectral brightness (or a synthetic demo voice),
+over a morphing two-chord ambient pad. Includes a text box + **Generate voice**
+button that speaks via the browser's `speechSynthesis` until a real TTS endpoint
+is wired in (qwen3-tts style).
 
 - Spec: `Drone Swarm Face Frontend Development Spec.md` (v0.3)
 - Reference image: `reference_image.png` (+ text notes in `reference-image-notes.md`)
@@ -26,7 +27,7 @@ Open `drone-face.html` directly in a browser (no network needed), or:
 
 ## Test
 
-    npm test             # headless Chromium self-test (41 assertions)
+    npm test             # headless Chromium self-test (42 assertions)
 
 Covers the state machine, face geometry (eye/nose/mouth centroids, blink squash,
 jaw drop), drag orientation limits, ambient toggle, lip-sync DSP (adaptive gain +

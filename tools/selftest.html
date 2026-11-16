@@ -27,12 +27,13 @@ async function main() {
 
   // ---- geometry ----
   const counts = T.getCounts();
-  assert('total drones ~4100', counts.total >= 3600 && counts.total <= 4400);
-  assert('face + mouth ~3200', counts.face + counts.mouth >= 2800 && counts.face + counts.mouth <= 3400);
-  assert('hair ~700', counts.hair >= 600 && counts.hair <= 800);
-  assert('eyes = 200', counts.eye === 200);
+  assert('total drones ~2870', counts.total >= 2500 && counts.total <= 3100);
+  assert('face + mouth ~2240', counts.face + counts.mouth >= 1900 && counts.face + counts.mouth <= 2400);
+  assert('hair ~490', counts.hair >= 420 && counts.hair <= 560);
+  assert('eyes = 140', counts.eye === 140);
   assert('no neck group', counts.neck === 0);
-  assert('mouth group populated', counts.mouth > 50);
+  assert('reserve ~28%', counts.reserve >= counts.total * 0.20 && counts.reserve <= counts.total * 0.38);
+  assert('mouth group populated', counts.mouth > 30);
   assert('no NaN in vertex attributes', T.attributeNaNCount() === 0);
 
   const gs = T.geometryStats();
@@ -56,7 +57,7 @@ async function main() {
 
   // ---- render check: the formed face fills a region, not just two eyes ----
   const rs = T.renderStats();
-  assert('formed face renders many points (lit > 8000)', !!(rs && rs.lit > 8000));
+  assert('formed face renders many points (lit > 5000)', !!(rs && rs.lit > 5000));
   assert('rendered face is horizontally centred', !!(rs && Math.abs(rs.cx - rs.w / 2) < rs.w * 0.25));
 
   // ---- drag orientation (while ACTIVE) ----

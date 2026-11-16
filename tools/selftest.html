@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DroneFace self-test</title>
+</head>
+<body>
+<iframe id="f" src="../drone-face.html" style="width:800px;height:600px;border:0"></iframe>
+<pre id="out">running…</pre>
+<script>
+const results = [];
+function assert(name, cond) { results.push({ name, pass: !!cond }); }
+
+async function main() {
+  const frame = document.getElementById('f');
+  await new Promise((res) => {
+    const check = () => (frame.contentWindow && frame.contentWindow.__DF) ? res() : setTimeout(check, 10);
+    frame.addEventListener('load', check);
+    check();
+  });
+  const w = frame.contentWindow;
+  const DF = w.DroneFace, T = w.__DF;
+  if (!DF || !T) { assert('app booted (DroneFace + __DF)', false); render(); return; }
+  assert('app booted (DroneFace + __DF)', true);
+
+  T.pause(); // stop the app's own rAF; the test drives time deterministically
+
+  // ---- geometry ----
+  const counts = T.getCounts();
+  assert('total drones = 8500', counts.total === 8500);
+  assert('face + mouth = 7000', counts.face + counts.mouth === 7000);
+  assert('hair = 900 (incl. ears)', counts.hair === 900);
+  assert('eyes = 200', counts.eye === 200);
+  assert('neck = 400', counts.neck === 400);
+  assert('mouth group populated', counts.mouth > 100);
+
+  const gs = T.geometryStats();
+  assert('nose tip protrudes (z > 0.5)', gs.noseTip.z > 0.5);
+  assert('nose tip near centre line (|x| < 0.15)', Math.abs(gs.noseTip.x) < 0.15);
+  assert('nose tip below centre (y < -0.2)', gs.noseTip.y < -0.2);
+  assert('jaw-drop displacement present', gs.jawDropMax > 0.05);
+  assert('blink displacement present', gs.blinkMax > 0.03);
+  assert('left eye cluster', gs.eyeXs.filter((x) => x < -0.2).length > 50);
+  assert('right eye cluster', gs.eyeXs.filter((x) => x > 0.2).length > 50);
+
+  // ---- state machine ----
+  assert('initial state idle', T.getState() === 'idle');
+  let stateChanged = false;
+  DF.on('stateChange', () => { stateChanged = true; });
+  DF.start();
+  assert('stateChange event fires', stateChanged);
+  assert('start() -> forming', T.getState() === 'forming');
+  for (let i = 0; i < 60; i++) T.tick(0.1); // 6 s
+  assert('forming completes -> active', T.getState() === 'active');
+
+  // ---- drag orientation (while ACTIVE) ----
+  const canvas = w.document.getElementById('scene');
+  const pe = { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true };
+  const drag = (x1, y1, x2, y2) => {
+    canvas.dispatchEvent(new w.PointerEvent('pointerdown', { ...pe, clientX: x1, clientY: y1 }));
+    canvas.dispatchEvent(new w.PointerEvent('pointermove', { ...pe, clientX: x2, clientY: y2 }));
+    canvas.dispatchEvent(new w.PointerEvent('pointerup', { ...pe, clientX: x2, clientY: y2 }));
+  };
+  drag(200, 200, 320, 280); // +120px right, +80px down
+  for (let i = 0; i < 40; i++) T.tick(0.05); // 2 s settle
+  let o = T.getOrientation();
+  assert('drag right -> yaw > 0', o.yaw > 10);
+  assert('drag down -> pitch > 0', o.pitch > 5);
+  assert('yaw within limit', o.yaw < 34);
+  assert('pitch within limit', o.pitch < 24);
+  drag(200, 200, 400, 200); // push past the yaw limit
+  for (let i = 0; i < 40; i++) T.tick(0.05);
+  assert('yaw clamped by rubber band (< 40)', T.getOrientation().yaw < 40);
+
+  // ---- ambient toggle ----
+  DF.setAmbient(false);
+  assert('setAmbient off', DF.ambient === false);
+  DF.setAmbient(true);
+  assert('setAmbient on', DF.ambient === true);
+
+  DF.disperse();
+  assert('disperse() -> dispersing', T.getState() === 'dispersing');
+  for (let i = 0; i < 50; i++) T.tick(0.1); // 5 s
+  assert('dispersing completes -> idle', T.getState() === 'idle');
+
+  // ---- 10 disperse/reform cycles stay clean (acceptance #10) ----
+  let cyclesOk = true;
+  for (let c = 0; c < 10; c++) {
+    DF.start();
+    for (let i = 0; i < 60; i++) T.tick(0.1);
+    if (T.getState() !== 'active') { cyclesOk = false; break; }
+    DF.disperse();
+    for (let i = 0; i < 50; i++) T.tick(0.1);
+    if (T.getState() !== 'idle') { cyclesOk = false; break; }
+  }
+  assert('10 disperse/reform cycles stay clean', cyclesOk);
+
+  // ---- mouth override ----
+  DF.setMouth(0.8, 0.5);
+  for (let i = 0; i < 20; i++) T.tick(0.05); // 1 s settle
+  let m = T.getMouth();
+  assert('setMouth open ~0.8', m.open > 0.65 && m.open < 0.9);
+  assert('setMouth width ~0.5', m.width > 0.35 && m.width < 0.65);
+  DF.setMouth(0, 0);
+  for (let i = 0; i < 20; i++) T.tick(0.05);
+  assert('setMouth closes', T.getMouth().open < 0.1);
+
+  // ---- lip-sync DSP (pure, synthetic) ----
+  const sr = 48000, n = 1024, half = n / 2;
+  const mk = (amp, freq) => { const a = new Float32Array(n); for (let i = 0; i < n; i++) a[i] = amp * Math.sin(i * freq); return a; };
+  const flatFd = new Float32Array(half); flatFd.fill(0);
+  const loud = mk(0.5, 0.3), silent = new Float32Array(n), quiet = mk(0.02, 0.3);
+
+  const r = T.computeMouth(loud, flatFd, sr, n, 0.016, 0);
+  assert('loud -> mouth open', r.open > 0.3);
+  const r2 = T.computeMouth(silent, flatFd, sr, n, 0.016, r.peak);
+  assert('silence -> mouth closed', r2.open === 0);
+  let pk = r.peak, openFinal = 0;
+  for (let f = 0; f < 400; f++) { const rr = T.computeMouth(quiet, flatFd, sr, n, 0.016, pk); pk = rr.peak; openFinal = rr.open; } // ~6.4 s: enough for the 1.5 s peak release
+  assert('adaptive gain: quiet recovers full gape', openFinal > 0.5);
+
+  const bin = sr / n, lo1 = Math.floor(2000 / bin), hi1 = Math.floor(8000 / bin);
+  const fdHi = new Float32Array(half), fdLo = new Float32Array(half);
+  for (let i = 0; i < half; i++) { fdHi[i] = (i >= lo1 && i < hi1) ? 0 : -60; fdLo[i] = (i < lo1) ? 0 : -60; }
+  const rHi = T.computeMouth(loud, fdHi, sr, n, 0.016, 0);
+  const rLo = T.computeMouth(loud, fdLo, sr, n, 0.016, 0);
+  assert('sibilant -> wide lips', rHi.width > 0.5);
+  assert('vowel -> narrower lips', rLo.width < rHi.width);
+
+  // ---- TTS wire format ----
+  let captured = null;
+  const realFetch = w.fetch;
+  w.fetch = async (url, opts) => {
+    captured = { url, opts };
+    return {
+      ok: true, status: 200,
+      headers: { get: (h) => (h.toLowerCase() === 'content-type' ? 'application/json' : null) },
+      async json() { return { audio_base64: 'AAAA' }; },
+    };
+  };
+  DF.setEndpoint('http://tts.test/api');
+  const buf = await T.requestTTS('hello world');
+  w.fetch = realFetch;
+  assert('TTS POSTs JSON body', captured && captured.opts.method === 'POST' && captured.opts.body === JSON.stringify({ text: 'hello world', voice: 'default', response_format: 'wav' }));
+  assert('TTS decodes base64 audio', buf && buf.byteLength === 3);
+
+  render();
+}
+
+function render() {
+  const pass = results.filter((r) => r.pass).length;
+  const html = results.map((r) => (r.pass ? 'PASS' : 'FAIL') + '  ' + r.name).join('\n') +
+    '\n\n' + pass + '/' + results.length + ' PASS';
+  const out = document.getElementById('out');
+  out.textContent = html;
+  document.title = pass + '/' + results.length + ' PASS';
+}
+
+main().catch((e) => {
+  const out = document.getElementById('out');
+  out.textContent = 'ERROR: ' + ((e && e.stack) || e);
+  document.title = 'ERROR';
+});
+</script>
+</body>
+</html>

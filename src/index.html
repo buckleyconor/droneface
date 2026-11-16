@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Drone Swarm Face</title>
+<style>
+  :root {
+    --bg: #02060d;
+    --turquoise: #19e6d3;
+    --cyan: #2ad0ff;
+    --ink: #cfe6ff;
+    --muted: #9fd8d0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  #scene { position: fixed; inset: 0; display: block; touch-action: none; cursor: grab; }
+  #scene.dragging { cursor: grabbing; }
+
+  /* Centred Start / Reform button */
+  #startWrap {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    z-index: 10; transition: opacity 0.5s ease;
+  }
+  #startWrap.hidden { opacity: 0; pointer-events: none; }
+  #startBtn {
+    font: inherit; font-size: 15px; letter-spacing: 0.35em; text-transform: uppercase;
+    color: var(--turquoise);
+    background: rgba(2, 6, 13, 0.55);
+    border: 1px solid rgba(25, 230, 211, 0.55);
+    border-radius: 999px;
+    padding: 16px 34px;
+    cursor: pointer;
+    box-shadow: 0 0 22px rgba(25, 230, 211, 0.25), inset 0 0 18px rgba(25, 230, 211, 0.08);
+    transition: box-shadow 0.2s, background 0.2s, border-color 0.2s;
+  }
+  #startBtn:hover {
+    box-shadow: 0 0 34px rgba(25, 230, 211, 0.45), inset 0 0 22px rgba(25, 230, 211, 0.15);
+    background: rgba(2, 6, 13, 0.7);
+  }
+  #startBtn:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+
+  /* Corner controls */
+  .corner { position: fixed; z-index: 11; }
+  #disperseBtn {
+    left: 20px; bottom: 20px;
+    font: inherit; font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--muted); background: transparent; border: none; cursor: pointer;
+    padding: 8px 6px;
+    opacity: 0; transition: opacity 0.4s; pointer-events: none;
+  }
+  #disperseBtn.visible { opacity: 0.7; pointer-events: auto; }
+  #disperseBtn:hover { opacity: 1; color: var(--turquoise); }
+  #disperseBtn:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+
+  #soundBtn {
+    right: 20px; bottom: 20px;
+    width: 40px; height: 40px; display: grid; place-items: center;
+    background: transparent; border: none; cursor: pointer; color: var(--muted);
+    transition: color 0.2s;
+  }
+  #soundBtn:hover { color: var(--turquoise); }
+  #soundBtn:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+  #soundBtn .wave { opacity: 0; transition: opacity 0.2s; }
+  #soundBtn.on .wave { opacity: 1; }
+  #soundBtn.off .cone, #soundBtn.off .arc { opacity: 0.4; }
+
+  #fallback {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    z-index: 20; max-width: 30em; text-align: center; line-height: 1.5;
+    color: var(--ink); padding: 24px; background: rgba(2, 6, 13, 0.9); border-radius: 8px;
+  }
+  #fallback[hidden] { display: none; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div id="startWrap"><button id="startBtn" type="button">Start</button></div>
+
+<button id="disperseBtn" type="button" class="corner">Disperse</button>
+
+<button id="soundBtn" type="button" class="corner on" aria-label="Sound on">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path class="cone" d="M11 5 L6 9 H2 v6 h4 l5 4 z"/>
+    <path class="arc" d="M15.5 8.5 a5 5 0 0 1 0 7"/>
+    <path class="wave" d="M18.5 5.5 a9 9 0 0 1 0 13"/>
+  </svg>
+</button>
+
+<div id="fallback" hidden>
+  <p>This page needs WebGL, which your browser did not provide.</p>
+  <p>Try a current version of Chrome, Edge, Firefox or Safari with hardware acceleration enabled.</p>
+</div>
+
+<script src="../dist/bundle.js"></script>
+</body>
+</html>

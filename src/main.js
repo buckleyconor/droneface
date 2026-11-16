@@ -251,7 +251,7 @@ function buildPoints(counts) {
     const mw = mouthWeight(x, y);
     const mo = mouthOpenDelta(x, y, mw);
     const mw2 = mouthWideDelta(x, y, mw);
-    pts.push({ p: [x, y, z], n, group: g, shade, mo, mw2, blink: 0 });
+    pts.push({ p: [x, y, z], n, group: g, shade, mo, mw2, blink: { x: 0, y: 0, z: 0 } });
   }
 
   // hair cap (top of the head, y >= hairline)
@@ -259,7 +259,7 @@ function buildPoints(counts) {
   const hair = sampleSurfaceRandom(Math.max(0, counts.hair - EAR_COUNT), (x, y) => y >= FACE.hairline);
   for (const [x, y, z] of hair) {
     const n = surfaceNormal(x, y);
-    pts.push({ p: [x, y, z], n, group: 1, shade: reliefShade(x, y), mo: { x: 0, y: 0, z: 0 }, mw2: { x: 0, y: 0, z: 0 }, blink: 0 });
+    pts.push({ p: [x, y, z], n, group: 1, shade: reliefShade(x, y), mo: { x: 0, y: 0, z: 0 }, mw2: { x: 0, y: 0, z: 0 }, blink: { x: 0, y: 0, z: 0 } });
   }
   // ears: small sparse arcs at each side, just below the eye line
   for (let i = 0; i < EAR_COUNT; i++) {
@@ -269,7 +269,7 @@ function buildPoints(counts) {
     const ey = FACE.eyeLine - 0.12 + t * 0.28;
     const ez = rz * 0.45;
     const n = { x: side * 0.5, y: 0, z: 0.86 };
-    pts.push({ p: [ex, ey, ez], n, group: 1, shade: 0.7, mo: { x: 0, y: 0, z: 0 }, mw2: { x: 0, y: 0, z: 0 }, blink: 0 });
+    pts.push({ p: [ex, ey, ez], n, group: 1, shade: 0.7, mo: { x: 0, y: 0, z: 0 }, mw2: { x: 0, y: 0, z: 0 }, blink: { x: 0, y: 0, z: 0 } });
   }
 
   // eyes: eyelid rim ring around each socket (the blink group)
@@ -304,11 +304,13 @@ function buildPoints(counts) {
     const z = (1 - t) * 0.12 + (Math.random() - 0.5) * 0.08;
     const n = { x: 0, y: 0, z: 1 };
     const fade = 1.0 - t; // dimmer toward the bottom
-    pts.push({ p: [x, y, z], n, group: 2, shade: 0.9 * fade, mo: { x: 0, y: 0, z: 0 }, mw2: { x: 0, y: 0, z: 0 }, blink: 0 });
+    pts.push({ p: [x, y, z], n, group: 2, shade: 0.9 * fade, mo: { x: 0, y: 0, z: 0 }, mw2: { x: 0, y: 0, z: 0 }, blink: { x: 0, y: 0, z: 0 } });
   }
 
   return pts;
 }
+
+const Z3 = { x: 0, y: 0, z: 0 };
 
 function makeGeometry(pts) {
   const n = pts.length;
@@ -323,13 +325,16 @@ function makeGeometry(pts) {
 
   for (let i = 0; i < n; i++) {
     const q = pts[i];
+    const moD = q.mo || Z3;
+    const mwD = q.mw2 || Z3;
+    const blD = q.blink || Z3;
     pos.set(q.p, i * 3);
     nrm.set([q.n.x, q.n.y, q.n.z], i * 3);
     grp[i] = q.group;
     shade[i] = q.shade;
-    mo.set([q.mo.x, q.mo.y, q.mo.z], i * 3);
-    mw.set([q.mw2.x, q.mw2.y, q.mw2.z], i * 3);
-    blink.set([q.blink.x, q.blink.y, q.blink.z], i * 3);
+    mo.set([moD.x, moD.y, moD.z], i * 3);
+    mw.set([mwD.x, mwD.y, mwD.z], i * 3);
+    blink.set([blD.x, blD.y, blD.z], i * 3);
     seed[i] = Math.random();
   }
 
@@ -377,14 +382,29 @@ float easeInOutCubic(float x) {
   return x < 0.5 ? 4.0 * x * x * x : 1.0 - pow(-2.0 * x + 2.0, 3.0) / 2.0;
 }
 
+float rand01(float n) { return fract(sin(n) * 43758.5453123); }
+
 vec3 drift(float seed, float t) {
-  float s1 = seed * 6.2831853;
-  float s2 = fract(seed * 1.71) * 6.2831853;
-  float s3 = fract(seed * 3.17) * 6.2831853;
+  // independent per-drone values (breaks the shared-Lissajous "lines" look)
+  float h0 = rand01(seed * 12.9898);
+  float h1 = rand01(seed * 78.233);
+  float h2 = rand01(seed * 37.719);
+  float h3 = rand01(seed * 91.287);
+  float h4 = rand01(seed * 61.111);
+  float h5 = rand01(seed * 23.669);
+
+  // per-drone frequencies (rad/s): slow drift, roughly 0.05..0.17 units/s
+  float fx = 0.05 + 0.12 * h0;
+  float fy = 0.05 + 0.12 * h1;
+  float fz = 0.04 + 0.10 * h2;
+  float gx = 0.02 + 0.05 * h3;
+  float gy = 0.02 + 0.05 * h4;
+  float gz = 0.015 + 0.04 * h5;
+
   vec3 p;
-  p.x = 0.95 * sin(0.70 * t + s1) + 0.55 * sin(1.30 * t + s2);
-  p.y = 0.95 * sin(0.60 * t + s2) + 0.55 * sin(1.10 * t + s3);
-  p.z = 1.40 * sin(0.50 * t + s3) + 0.50 * sin(0.90 * t + s1);
+  p.x = 0.95 * sin(fx * t + h0 * 6.2831853) + 0.50 * sin(gx * t + h3 * 6.2831853);
+  p.y = 0.95 * sin(fy * t + h1 * 6.2831853) + 0.50 * sin(gy * t + h4 * 6.2831853);
+  p.z = 1.40 * sin(fz * t + h2 * 6.2831853) + 0.50 * sin(gz * t + h5 * 6.2831853);
   return p;
 }
 
@@ -976,6 +996,31 @@ function makeInternals() {
         if (grp === 4) { eyeXs.push(x); blinkMax = Math.max(blinkMax, Math.hypot(blink.getX(i), blink.getY(i), blink.getZ(i))); }
       }
       return { noseTip: nose, jawDropMax: jawDrop, blinkMax, eyeXs };
+    },
+    attributeNaNCount() {
+      if (!geometry) return -1;
+      let n = 0;
+      for (const name of ['position', 'normal', 'aMouthOpen', 'aMouthWide', 'aBlink']) {
+        const a = geometry.getAttribute(name);
+        for (let i = 0; i < a.count * a.itemSize; i++) if (!isFinite(a.array[i])) n++;
+      }
+      return n;
+    },
+    renderStats() {
+      if (!renderer) return null;
+      renderer.render(scene, camera);
+      const gl = renderer.getContext();
+      const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+      const buf = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      let lit = 0, sumX = 0, sumY = 0;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          if (buf[i] + buf[i + 1] + buf[i + 2] > 60) { lit++; sumX += x; sumY += y; }
+        }
+      }
+      return { w, h, lit, cx: lit ? sumX / lit : -1, cy: lit ? sumY / lit : -1 };
     },
     tick,
     computeMouth,

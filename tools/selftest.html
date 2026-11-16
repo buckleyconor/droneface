@@ -33,6 +33,7 @@ async function main() {
   assert('eyes = 200', counts.eye === 200);
   assert('neck = 400', counts.neck === 400);
   assert('mouth group populated', counts.mouth > 100);
+  assert('no NaN in vertex attributes', T.attributeNaNCount() === 0);
 
   const gs = T.geometryStats();
   assert('nose tip protrudes (z > 0.5)', gs.noseTip.z > 0.5);
@@ -52,6 +53,11 @@ async function main() {
   assert('start() -> forming', T.getState() === 'forming');
   for (let i = 0; i < 60; i++) T.tick(0.1); // 6 s
   assert('forming completes -> active', T.getState() === 'active');
+
+  // ---- render check: the formed face fills a region, not just two eyes ----
+  const rs = T.renderStats();
+  assert('formed face renders many points (lit > 20000)', !!(rs && rs.lit > 20000));
+  assert('rendered face is horizontally centred', !!(rs && Math.abs(rs.cx - rs.w / 2) < rs.w * 0.25));
 
   // ---- drag orientation (while ACTIVE) ----
   const canvas = w.document.getElementById('scene');

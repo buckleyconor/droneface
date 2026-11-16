@@ -6,7 +6,7 @@ Version 0.3 (draft) | 16 November 2026
 
 A single, standalone HTML page that renders a face made of a swarm of glowing turquoise drones against a dark sky. On load the drones drift randomly. When the user presses **Start**, the drones fly into formation as a 3D face. The user can turn the face by dragging. The page is the frontend for a planned application in which a text-to-speech (TTS) LLM provides the voice and the face's mouth moves in sync with the audio.
 
-The visual reference (see `reference_image.png` in this directory) is a night-time drone-show face: a dense surface of small lights, brightest at the silhouette edges, with sparser drones forming the hair outline and neck.
+The visual reference (see `reference_image.png` in this directory) is a night-time drone-show face: a dense surface of small lights, brightest at the silhouette edges, with sparser drones forming the hair band.
 
 ## 2. Goals and non-goals
 
@@ -33,7 +33,7 @@ The visual reference (see `reference_image.png` in this directory) is a night-ti
 | Packaging | Fully offline: three.js inlined in the HTML file |
 | Lip sync | Audio amplitude only: simple jaw/mouth open-close |
 | Renderer | three.js (WebGL) |
-| Colour | Face turquoise; hair (and ears) bottle green; dark background |
+| Colour | Face turquoise; hair band bottle green; dark background |
 | Face look | Generic, neutral face; not modelled on a specific person |
 | Swarm lifecycle | Can disperse back to free flight and re-form, repeatedly |
 | Ambient sound | Included, with a control to turn it off and on |
@@ -75,17 +75,17 @@ The flow is a loop: `DISPERSING` returns to `IDLE`, and Start (shown as Reform) 
 **Layout**
 
 - Full-viewport canvas, dark background.
-- The face occupies roughly 75 to 85% of the viewport height, centred, with the neck fading out at the bottom.
+- The face occupies roughly 75 to 85% of the viewport height, centred.
 - Start button: centred, minimal, turquoise outline with subtle glow; hover and focus states required; keyboard accessible.
 - Disperse control: a small, unobtrusive text button in a corner, visible only in `ACTIVE`; keyboard accessible. After dispersal the centred button returns, labelled Reform.
 - Sound toggle: a small speaker icon button in the opposite corner, visible in every state; keyboard accessible, with an accessible label ("Sound on" or "Sound off") and a clear on/off icon state.
+- Voice control: a text box (bottom centre) and a **Generate voice** button. Typing text and pressing the button forms the face (if needed) and speaks the words using the browser's `speechSynthesis` as the demo voice, with the mouth moving to a synthetic speech envelope until a real TTS endpoint is wired in.
 
 ## 6. Visual design
 
 - **Background:** near-black blue, `#02060d`, optionally with a very faint vertical gradient.
 - **Face drone colour (turquoise):** `#19e6d3`. Per-drone variation: shift hue slightly toward cyan `#2ad0ff` and lightness by ±10% to give a shimmering surface.
-- **Hair and ear drone colour (bottle green):** base `#0b7a56`, with the same ±10% lightness variation. Bottle green is dark, so it is brightened until it reads clearly against the dark background with additive glow; the value is a tunable constant and is judged by eye.
-- **Neck and shoulders:** the face turquoise at reduced brightness, fading out toward the bottom.
+- **Hair drone colour (bottle green):** base `#18c990`, with the same ±10% lightness variation — brightened so the hair band reads clearly against the dark background; the value is a tunable constant judged by eye.
 - **Edge emphasis:** drones on silhouette edges (where the surface normal is perpendicular to the view direction) render brighter and slightly larger, tinted toward cyan-white `#7ff5ea`. This reproduces the bright rim in `reference_image.png`.
 - **Depth cue:** points farther from the camera are slightly dimmer and smaller.
 - **Relief shading:** protruding areas (nose bridge/tip, cheekbones, brow edge) are brighter and recessed areas (eye sockets, nostrils, under the brow and lower lip, sides of the nose) are dimmer — the reference shades by dot brightness and density, not by lighting.
@@ -106,10 +106,10 @@ The face is generated once at page load (target under 300 ms) as a set of 3D tar
    - brow ridge, eye sockets, nose bridge, nose tip and nostrils, cheekbones, upper and lower lip, chin, jaw line.
 3. Sample points on the front hemisphere of the surface using a Fibonacci-sphere or jittered grid distribution, then project onto the relief surface. Density is roughly uniform on the face.
 4. Add secondary groups:
-   - **Hair (incl. ears):** a sparse band of drones along the hairline and top of the head, plus small sparse ear clusters at each side, coloured bottle green (see section 6). This is one combined group, named `hair` in the attributes.
+   - **Hair:** a band of drones along the hairline and top of the head, coloured bottle green (see section 6), named `hair` in the attributes.
    - **Eyes:** a small dense cluster of drones tracing the eyelid rim around each eye socket. These are the blink group: a blink moves them toward the socket centre (with a slight dim), then back.
-   - **Neck and shoulders:** a sparse, fading set of drones at the bottom, lower density and lower brightness.
-5. Each point stores attributes: `target` (vec3), `group` (`face`, `hair`, `neck`, `mouth`, `eye`), `mouthWeight` (0 to 1), `blinkWeight` (0 to 1, nonzero on eyelid drones), `seed` (random), `edgeFactor`.
+   - **Feature accents:** denser drone lines layered over the base surface along the nose bridge and tip, the lip edges, the cheekbones and the jaw rim, so the face reads as a mesh with clearly defined features rather than a solid oval.
+5. Each point stores attributes: `target` (vec3), `group` (`face`, `hair`, `mouth`, `eye`), `mouthWeight` (0 to 1), `blinkWeight` (0 to 1, nonzero on eyelid drones), `seed` (random), `edgeFactor`.
 
 **Mouth region.** Points within an elliptical region around the lips get `mouthWeight` greater than 0. Weight is 1 at the lower lip and jaw, falling smoothly to 0 at the mouth boundary. Upper lip has a small weight so the mouth opens mostly by jaw drop.
 
@@ -117,11 +117,10 @@ The face is generated once at page load (target under 300 ms) as a set of 3D tar
 
 | Group | Count |
 | --- | --- |
-| Face surface | 7,000 |
-| Hair (incl. ears) | 900 |
+| Face surface (base + feature accents) | 3,200 |
+| Hair band | 700 |
 | Eyes | 200 |
-| Neck/shoulders | 400 |
-| Total | about 8,500 |
+| Total | about 4,100 |
 
 The total is a constant at the top of the file. A quality setting should scale it down on weak GPUs (see section 11).
 
@@ -200,7 +199,7 @@ All motion is computed in the vertex shader from uniforms, so JavaScript only up
 
 **Ambient sound.** A quiet, looping ambient soundscape (a low hum with a soft shimmer, suggesting a drone swarm) plays after the first press of Start, and the user can turn it off and on at any time.
 
-- **Source:** generated in the page with the Web Audio API (oscillators, filtered noise, slow LFO modulation). No audio file is embedded, so the page stays offline and small. A short embedded loop is the fallback if the generated sound is not good enough.
+- **Source:** generated in the page with the Web Audio API — a soft, slowly-evolving chord pad of detuned oscillators (no noise). No audio file is embedded, so the page stays offline and small. A short embedded loop is the fallback if the generated sound is not good enough.
 - **Start:** begins on the Start press (browsers require a user gesture) and fades in over about 2 seconds. It keeps playing through all states, with a gentle swell during `FORMING` and `DISPERSING`.
 - **Control:** the sound toggle (section 5) switches it off and on. Muting and unmuting use a gain ramp of about 0.3 seconds to avoid clicks. The default is on, and the choice is remembered between visits where the browser allows storage (guarded with try/catch).
 - **Ducking:** while `SPEAKING`, the ambient level drops by about 6 dB so speech stays clear, and returns over about 0.5 seconds after speech ends.
@@ -244,7 +243,7 @@ window.DroneFace = {
 | Item | Target |
 | --- | --- |
 | Frame rate | 60 fps on a mid-range laptop with integrated graphics; 30 fps minimum on a recent phone |
-| Drone count | About 8,500 default; auto-reduce to about 4,200 if the first 60 frames average under 40 fps |
+| Drone count | About 4,100 default; auto-reduce to about 2,050 if the first 60 frames average under 40 fps |
 | Device pixel ratio | Capped at 2 |
 | Browsers | Current Chrome, Edge, Firefox, Safari (WebGL2) |
 | File size | Under about 500 KB total |
@@ -286,7 +285,7 @@ The repo lives in `droneface-spec/` (this directory), alongside this spec and `r
 2. Pressing Start moves every drone smoothly into a recognisable 3D face within about 5 seconds, with no visible jumps. The face is turquoise and the hair is bottle green.
 3. The face fills most of the viewport height on desktop and on a phone in portrait.
 4. Dragging turns the face left, right, up and down within the set limits, never showing the back of the head, and feels smooth.
-5. The face looks like a swarm of points: individual drones are visible, with bright edges and sparser hair and neck.
+5. The face looks like a swarm of points: individual drones are visible, with bright edges, a clearly defined nose, lips and cheekbones, and a sparser hair band.
 6. Calling `DroneFace.attachAudio` with an audio element makes the mouth open and close in time with the loudness of the audio, with no more than about 100 ms of visible lag, and the lips widen on sibilants.
 7. `DroneFace.setMouth(0..1, 0..1)` moves the mouth from closed to fully open and the lip width from relaxed to wide.
 8. The file works with no network connection.
@@ -320,9 +319,10 @@ The repo lives in `droneface-spec/` (this directory), alongside this spec and `r
 - All on-screen text is English: Start, Reform, Disperse and the sound toggle's label.
 - Ambient sound starts on the Start press and is on by default; the sound toggle is available in every state.
 - Disperse is offered through a small control while the face is active and is unavailable while speaking; the centred button reads Reform after a dispersal. Both can be changed.
-- Neck and shoulder drones use the face turquoise at reduced brightness; only the hair and ears are bottle green.
+- Only the hair band is bottle green; the face is turquoise. There is no neck/shoulders group (removed) and no separate ears.
 - Mouth movement and eye blinks are the only animated facial features in v1 (blinks move/dim the eyelid drones every 3 to 6 seconds while the face is formed).
 - The TTS request shape (`POST {"text","voice","response_format":"wav"}`) is a guess at a qwen3-tts style server and is isolated in `requestTTS`; the endpoint and voice are configurable at runtime and the page falls back to `speechSynthesis` offline.
+- The **Generate voice** button speaks through the browser's `speechSynthesis` as a demo voice (mouth driven by a synthetic speech envelope); once a TTS endpoint is configured via `setEndpoint`, `speak` uses real audio and amplitude lip sync instead.
 
 ## 17. Decisions and open questions
 

@@ -202,6 +202,37 @@ async function mouthOpensOnScreen() {
   }`, [['__shot0', '__shot1', '__shot2', '__shot3']]);
 }
 
+// Where the lit mass sits on screen, as a fraction of the frame. A yaw rotation changes the
+// silhouette's shape more than its position, so an alignment search finds nothing; the
+// centroid is the first moment and it does move. Pixels from the screen — evidence that the
+// model matrix reached the GPU, in the same spirit as reading uMouthOpen back for the mouth.
+async function litCentroid(key) {
+  return call(`async (k) => {
+    const img = await createImageBitmap(new Blob([Uint8Array.from(atob(window[k]), (c) => c.charCodeAt(0))], { type: 'image/png' }));
+    const c = new OffscreenCanvas(img.width, img.height), g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, 0, 0);
+    const d = g.getImageData(0, 0, c.width, c.height).data;
+    let w = 0, sx = 0, sy = 0;
+    for (let y = 0; y < c.height; y += 2) for (let x = 0; x < c.width; x += 2) {
+      const i = (y * c.width + x) * 4, lum = d[i] + d[i + 1] + d[i + 2];
+      w += lum; sx += lum * x; sy += lum * y;
+    }
+    return { cx: +(sx / w / c.width).toFixed(5), cy: +(sy / w / c.height).toFixed(5) };
+  }`, [key]);
+}
+
+// wait for the idle machine to reach a pose, so the check is about the cycle and not about
+// wall-clock luck
+async function untilIdle(pred, ms, what) {
+  const t0 = Date.now();
+  for (;;) {
+    const g = await ev('__DF.getIdle()');
+    if (pred(g)) return g;
+    if (Date.now() - t0 > ms) throw new Error('timed out waiting for ' + what + ', last pose ' + JSON.stringify(g));
+    await sleep(200);
+  }
+}
+
 // sample the mouth once per frame for ms milliseconds
 await ev(`window.__sample = (ms) => new Promise((done) => {
   const out = [], t0 = performance.now();
@@ -238,6 +269,7 @@ async function speakAndWatch(setup, say, ms) {
 
 // --- the settings the page ships with, then the live server if it is up -----------
 // the shader must be receiving what the analysis computed
+await ev('DroneFace.setIdleMotion(false)');   // the pixel checks below need a still head
 const uniformCheck = await ev(`(async () => {
   DroneFace.setMouth(1, 0.6);
   await new Promise((r) => setTimeout(r, 400));
@@ -413,6 +445,34 @@ await ev(`DroneFace.setEndpoint(${JSON.stringify(origin + '/legacy')}); DroneFac
 await sleep(600);
 r = await ev(`(async () => { DroneFace.stop(); return __motion(await __sample(900)); })()`);
 assert('stop() cuts the voice mid-utterance', r.peakOpen < 0.35 && !r.moving && (await ev('DroneFace.voiceStatus().audioActive')) === false, JSON.stringify(r));
+
+// --- idle motion (spec §9.2): the head has to move on screen, not just in the numbers ---
+// The tilt is deliberately only 3.5 degrees, below what a pixel estimate can call with
+// confidence, so the screen evidence here is the 12 degree glance: big enough to measure,
+// small enough to still read as a glance. The tilt is pinned by the deterministic cycle in
+// the self-test.
+await ev('DroneFace.stop(); DroneFace.setIdleMotion(true)');
+// away from the corners: the UI is bright, stationary, and dilutes the centroid
+const vp = await ev('({ w: innerWidth, h: innerHeight })');
+const headClip = { x: Math.round(vp.w * 0.12), y: Math.round(vp.h * 0.1), width: Math.round(vp.w * 0.76), height: Math.round(vp.h * 0.72), scale: 1 };
+await sleep(1500);
+await stash('__idleA', await shot(headClip));
+const glancePose = await untilIdle((g) => g.phase === 'hold' && Math.abs(g.yaw) > 10, 45000, 'a glance to hold');
+await stash('__idleB', await shot(headClip));
+await untilIdle((g) => g.phase === 'wait' && g.t > 1.5 && Math.abs(g.yaw) < 0.05 && Math.abs(g.roll) < 0.05,
+  45000, 'the head back at centre');
+await stash('__idleC', await shot(headClip));
+const centre = await litCentroid('__idleA'), glance = await litCentroid('__idleB'), back = await litCentroid('__idleC');
+const dxGlance = +((glance.cx - centre.cx) * 1000).toFixed(2), dxBack = +((back.cx - centre.cx) * 1000).toFixed(2);
+console.log(`   idle evidence on screen: the glance slid the lit mass ${dxGlance} px per 1000 px wide, the return ${dxBack} px, pose ${JSON.stringify(glancePose)}`);
+// the return frame is the noise floor for the same estimator on the same head, so the
+// glance is judged against it rather than against a number invented here
+assert('a glance actually turns the head on screen',
+  Math.abs(dxGlance) >= 4 && Math.abs(dxGlance) > 8 * Math.max(0.1, Math.abs(dxBack)),
+  JSON.stringify({ centre, glance, dxGlance, dxBack }));
+assert('and the head returns to where it started', Math.abs(dxBack) <= 1.5, JSON.stringify({ centre, back, dxBack }));
+
+await ev('DroneFace.setIdleMotion(false)');
 
 assert('no uncaught exceptions in the page', exceptions.length === 0, exceptions.join(' | '));
 assert('failures are warned on the console', warnings.some((w) => /TTS failed/.test(w)), warnings.join(' | '));

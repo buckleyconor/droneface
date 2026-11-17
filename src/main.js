@@ -49,6 +49,17 @@ const CONFIG = {
   recentreDelay: 3.0,     // seconds of no input before easing back to centre
   recentreEnabled: true,
 
+  // idle motion (spec §9.2): the slow gesture cycle a waiting face runs so it is not a statue
+  idleMotion: {
+    tiltDeg: 3.5,         // roll, ear toward shoulder. This is the maximum, ever
+    holdTilt: 3.0,
+    lookDeg: 12,          // a glance off to the side, about a third of the drag limit
+    holdLook: 2.0,
+    gap: 10.0,            // seconds of nothing between gestures
+    moveIn: 1.6,          // seconds to reach a pose, eased
+    moveOut: 1.4,         // seconds to return to centre
+  },
+
   // camera
   fov: 35,
   faceFractionHeight: 0.80, // head (2 units) fills this fraction of viewport height
@@ -1017,6 +1028,8 @@ function initInput() {
 }
 
 function orientStep(dt) {
+  idleStep(dt);
+
   // soft limits (rubber band): slow as we approach the limit
   const yl = CONFIG.yawLimit, pl = CONFIG.pitchLimit;
   yawTarget = rubber(yawTarget, yl);
@@ -1035,11 +1048,13 @@ function orientStep(dt) {
     }
   }
 
-  // build model = RY(yaw) * RX(pitch)
+  // build model = RY(yaw + idle glance) * RX(pitch) * RZ(idle tilt)
+  // roll goes innermost so it is a tilt of the head's own axis, whichever way it faces
   const rad = Math.PI / 180;
-  const ry = new Matrix4().makeRotationY(yaw * rad);
+  const ry = new Matrix4().makeRotationY((yaw + idle.yaw) * rad);
   const rx = new Matrix4().makeRotationX(pitch * rad);
-  model.multiplyMatrices(ry, rx);
+  const rz = new Matrix4().makeRotationZ(idle.roll * rad);
+  model.multiplyMatrices(ry, rx).multiply(rz);
   uniforms.uModel.value = model;
 }
 
@@ -1047,6 +1062,74 @@ function rubber(v, limit) {
   // soft clamp: full travel inside, damped beyond
   if (Math.abs(v) <= limit) return v;
   return Math.sign(v) * (limit + (Math.abs(v) - limit) * 0.2);
+}
+
+/* ----------------------------------------------------------------------------
+ * Idle motion. A formed face that holds perfectly still reads as a paused video,
+ * so while it is formed and silent it runs a slow cycle of small gestures — tilt,
+ * glance, tilt the other way, glance the other way — with ten seconds of doing
+ * nothing between each. The stillness is the point: gestures every few seconds
+ * would be a screensaver, not a head waiting for its next instruction.
+ * -------------------------------------------------------------------------*/
+
+const idle = {
+  step: 0, phase: 'wait', t: 0, from: 0, pose: 0, axis: 'roll',
+  yaw: 0, roll: 0, enabled: true,
+};
+
+function idleCycle() {
+  const c = CONFIG.idleMotion;
+  return [
+    { axis: 'roll', value: -c.tiltDeg, hold: c.holdTilt },
+    { axis: 'yaw', value: -c.lookDeg, hold: c.holdLook },
+    { axis: 'roll', value: c.tiltDeg, hold: c.holdTilt },
+    { axis: 'yaw', value: c.lookDeg, hold: c.holdLook },
+  ];
+}
+
+// same easing the formation transition uses, in JS
+const easeSoft = (p) => p * p * (3 - 2 * p);
+
+function idleStep(dt) {
+  const c = CONFIG.idleMotion;
+  const cycle = idleCycle();
+  const free = idle.enabled && !reducedMotion && !dragging &&
+    state === State.ACTIVE && !audioActive && !synthVoice;
+
+  if (!free) {
+    // a gesture in progress finishes the way it started, along the same curve; then the
+    // cycle sits at its start so the ten-second wait restarts from the beginning
+    if (idle.pose !== 0) {
+      idle.pose += (0 - idle.pose) * Math.min(1, dt / (c.moveOut * 0.5));
+      if (Math.abs(idle.pose) < 0.002) idle.pose = 0;
+    }
+    idle.phase = 'wait'; idle.t = 0; idle.step = 0; idle.from = idle.pose;
+    return;
+  }
+
+  idle.t += dt;
+  const g = cycle[idle.step];
+  if (idle.phase === 'wait') {
+    idle.pose = 0;
+    if (idle.t >= c.gap) { idle.axis = g.axis; idle.from = 0; idle.phase = 'in'; idle.t = 0; }
+  } else if (idle.phase === 'in') {
+    const p = Math.min(1, idle.t / c.moveIn);
+    idle.pose = idle.from + (g.value - idle.from) * easeSoft(p);
+    if (p >= 1) { idle.pose = g.value; idle.phase = 'hold'; idle.t = 0; }
+  } else if (idle.phase === 'hold') {
+    idle.pose = g.value;
+    if (idle.t >= g.hold) { idle.from = g.value; idle.phase = 'out'; idle.t = 0; }
+  } else {
+    const p = Math.min(1, idle.t / c.moveOut);
+    idle.pose = idle.from * (1 - easeSoft(p));
+    if (p >= 1) {
+      idle.pose = 0;
+      idle.step = (idle.step + 1) % cycle.length;
+      idle.phase = 'wait'; idle.t = 0;
+    }
+  }
+  idle.yaw = idle.axis === 'yaw' ? idle.pose : 0;
+  idle.roll = idle.axis === 'roll' ? idle.pose : 0;
 }
 
 /* ============================================================================
@@ -1646,6 +1729,9 @@ function makeApi() {
       if (typeof yaw === 'number') CONFIG.yawLimit = yaw;
       if (typeof pitch === 'number') CONFIG.pitchLimit = pitch;
     },
+    // off for a screenshot, a recording, or a test that needs a still head (spec §9.2)
+    setIdleMotion(on) { idle.enabled = !!on; },
+    get idleMotion() { return idle.enabled && !reducedMotion; },
     on(event, handler) { addListener(event, handler); },
   };
   return window.DroneFace;
@@ -1672,7 +1758,11 @@ function makeInternals() {
     int16FromBase64: base64ToInt16,
     voicesUrlFor: voicesUrl,
     getMouth: () => ({ open: mouthOpen, width: lipWidth }),
-    getOrientation: () => ({ yaw, pitch }),
+    getOrientation: () => ({ yaw, pitch, roll: idle.roll, idleYaw: idle.yaw, idleRoll: idle.roll }),
+    getIdle: () => ({
+      phase: idle.phase, step: idle.step, t: +idle.t.toFixed(3),
+      yaw: +idle.yaw.toFixed(4), roll: +idle.roll.toFixed(4), enabled: idle.enabled,
+    }),
     getCounts() {
       if (!geometry) return null;
       const g = geometry.getAttribute('aGroup');
@@ -1993,6 +2083,7 @@ function initUI() {
         // the two lines that matter when the face will not talk: computed value vs what
         // the shader was actually handed
         line('uniforms', u ? `mouth ${u.mouthOpen}  wide ${u.lipWidth}  blink ${u.blink}` : '?'),
+        line('orient', `yaw ${yaw.toFixed(1)}  pitch ${pitch.toFixed(1)}  idle ${JSON.stringify(__DF.getIdle()).replace(/["{}]/g, '')}`),
         line('playing', `${audioActive}  synth ${synthVoice}  sound ${soundOn}`),
         line('mode', `${vs.mode}  (${vs.detail})`.slice(0, 62)),
         line('endpoint', (vs.endpoint || 'none').slice(0, 62)),

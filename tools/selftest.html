@@ -9,7 +9,7 @@
 <pre id="out">running…</pre>
 <script>
 const results = [];
-function assert(name, cond) { results.push({ name, pass: !!cond }); }
+function assert(name, cond, detail) { results.push({ name, pass: !!cond, detail }); }
 
 async function main() {
   const frame = document.getElementById('f');
@@ -111,6 +111,93 @@ async function main() {
   DF.setMouth(0, 0);
   for (let i = 0; i < 20; i++) T.tick(0.05);
   assert('setMouth closes', T.getMouth().open < 0.1);
+
+  // ---- idle motion (spec §9.2): tilt, glance, the other way, 10 s of nothing between ----
+  assert('idle motion is on by default', DF.idleMotion === true);
+  DF.setIdleMotion(true);
+  DF.disperse();
+  for (let i = 0; i < 50; i++) T.tick(0.1);   // 5 s, back to idle: the cycle resets
+  DF.start();
+  for (let i = 0; i < 60; i++) T.tick(0.1);   // 6 s forming, ACTIVE on the last frame
+  assert('cycle restarts when the face reforms', T.getIdle().step === 0 && T.getIdle().phase === 'wait');
+
+  // sample the head pose every 50 ms for a minute of waiting
+  const series = [];
+  for (let i = 0; i < 64 / 0.05; i++) {
+    T.tick(0.05);
+    const g = T.getIdle();
+    series.push([+(i * 0.05).toFixed(2), g.yaw, g.roll]);
+  }
+  assert('still for the first ten seconds of waiting',
+    series.filter(([t]) => t < 9.8).every(([, y, r]) => Math.abs(y) < 0.05 && Math.abs(r) < 0.05),
+    JSON.stringify(series.filter(([, y, r]) => Math.abs(y) > 0.05 || Math.abs(r) > 0.05).slice(0, 3)));
+
+  // cut the series into gestures: one starts when an axis passes half a degree, and ends
+  // when the head has been back at centre for half a second
+  const gestures = [];
+  let cur = null, stillFor = 0;
+  for (const [t, yaw, roll] of series) {
+    const axis = Math.abs(roll) > Math.abs(yaw) ? 'roll' : 'yaw';
+    const v = axis === 'roll' ? roll : yaw;
+    if (!cur) {
+      if (Math.abs(v) > 0.5) cur = { axis, start: t, peak: v, samples: [v], end: t };
+    } else if (Math.abs(yaw) < 0.2 && Math.abs(roll) < 0.2) {
+      stillFor += 0.05;
+      if (stillFor >= 0.5) {
+        cur.end = t;
+        // the plateau, measured against the peak the gesture actually reached — a running
+        // threshold would count the easing-in as holding still
+        cur.peak = cur.samples.reduce((a, x) => (Math.abs(x) > Math.abs(a) ? x : a), 0);
+        cur.held = cur.samples.filter((x) => Math.abs(x) >= 0.98 * Math.abs(cur.peak)).length * 0.05;
+        gestures.push(cur); cur = null; stillFor = 0;
+      }
+    } else {
+      stillFor = 0;
+      cur.samples.push(v);
+    }
+  }
+  const describe = () => JSON.stringify(gestures.map((g) => [g.axis, g.peak, +g.held.toFixed(1), +g.start.toFixed(1)]));
+  assert('four gestures in a minute of waiting', gestures.length === 4, describe());
+  assert('the cycle is tilt, glance, tilt, glance',
+    gestures.map((g) => g.axis).join(',') === 'roll,yaw,roll,yaw', describe());
+  assert('a tilt never exceeds 4 degrees',
+    gestures.filter((g) => g.axis === 'roll').every((g) => Math.abs(g.peak) <= 4), describe());
+  assert('a tilt reaches about 3.5 degrees',
+    gestures.filter((g) => g.axis === 'roll').every((g) => Math.abs(Math.abs(g.peak) - 3.5) < 0.4), describe());
+  assert('a glance is about a third of the turn limit',
+    gestures.filter((g) => g.axis === 'yaw').every((g) => Math.abs(Math.abs(g.peak) - 12) < 0.8), describe());
+  assert('one way, then the other',
+    gestures.every((g, i) => Math.sign(g.peak) === (i < 2 ? -1 : 1)), describe());
+  assert('holds each pose (3 s tilt, 2 s glance)',
+    Math.abs(gestures[0].held - 3) < 0.7 && Math.abs(gestures[1].held - 2) < 0.7 &&
+    Math.abs(gestures[2].held - 3) < 0.7 && Math.abs(gestures[3].held - 2) < 0.7, describe());
+  const gaps = gestures.slice(1).map((g, i) => +(g.start - gestures[i].end).toFixed(2));
+  assert('about 10 s of nothing between gestures',
+    gaps.length === 3 && gaps.every((x) => Math.abs(x - 10) < 1.5), JSON.stringify(gaps));
+
+  // speaking must stop the cycle, not just pause the gesture it is in the middle of
+  DF.setEndpoint('http://127.0.0.1:1/tts');
+  DF.speak('waiting on audio that cannot arrive, so the fallback holds the face busy');
+  const nap = (ms) => new Promise((res) => setTimeout(res, ms));
+  for (let i = 0; i < 40 && DF.voiceStatus().synthVoice !== true; i++) { T.tick(0.05); await nap(50); }
+  assert('the fallback engaged (speaking face)', DF.voiceStatus().synthVoice === true, JSON.stringify(DF.voiceStatus()));
+  for (let i = 0; i < 24 / 0.05; i++) T.tick(0.05);   // 24 s of waiting, with voice playing
+  const spoke = T.getIdle();
+  assert('speech holds the head at centre, past the ten-second wait',
+    Math.abs(spoke.yaw) < 0.2 && Math.abs(spoke.roll) < 0.2, JSON.stringify(spoke));
+  DF.stop();
+  await nap(50);
+
+  DF.setIdleMotion(false);
+  DF.disperse();
+  for (let i = 0; i < 50; i++) T.tick(0.1);
+  DF.start();
+  for (let i = 0; i < 60; i++) T.tick(0.1);
+  for (let i = 0; i < 40 / 0.05; i++) T.tick(0.05);
+  const offPose = T.getIdle();
+  assert('setIdleMotion(false) holds the head still',
+    DF.idleMotion === false && Math.abs(offPose.yaw) < 0.02 && Math.abs(offPose.roll) < 0.02, JSON.stringify(offPose));
+  DF.setIdleMotion(true);
 
   // ---- lip-sync DSP (pure, synthetic) ----
   const sr = 48000, n = 1024, half = n / 2;
@@ -244,7 +331,7 @@ async function main() {
 
 function render() {
   const pass = results.filter((r) => r.pass).length;
-  const html = results.map((r) => (r.pass ? 'PASS' : 'FAIL') + '  ' + r.name).join('\n') +
+  const html = results.map((r) => (r.pass ? 'PASS' : 'FAIL') + '  ' + r.name + (r.pass || !r.detail ? '' : '  :: ' + r.detail)).join('\n') +
     '\n\n' + pass + '/' + results.length + ' PASS';
   const out = document.getElementById('out');
   out.textContent = html;

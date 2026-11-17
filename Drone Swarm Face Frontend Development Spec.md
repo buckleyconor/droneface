@@ -163,6 +163,8 @@ All motion is computed in the vertex shader from uniforms, so JavaScript only up
 
 ## 9. Interaction: head orientation
 
+### 9.1 Drag
+
 - Input: pointer drag (mouse and touch) on the canvas. Pointer events are used so one code path covers both.
 - Mapping: horizontal drag changes yaw, vertical drag changes pitch.
 - **Limits (defaults):** yaw ±35°, pitch ±25°. These are constants. The limits keep the back of the head (which is not modelled) from ever being visible.
@@ -171,6 +173,38 @@ All motion is computed in the vertex shader from uniforms, so JavaScript only up
 - Behaviour on release: orientation holds, then optionally eases back to centre after 3 s of no input (configurable; default on).
 - The rotation is applied as a model rotation in the shader or on the `Points` object, with the camera fixed. Dragging is disabled until the state is `ACTIVE`.
 - Drag does not select text or trigger browser gestures (`touch-action: none` on the canvas).
+
+### 9.2 Idle motion — waiting, not parked
+
+A formed face that holds perfectly still reads as a paused video. While it is formed and
+silent it runs a slow cycle of small gestures, the way a person looks around while waiting
+for the next instruction:
+
+| step | gesture | peak | hold at peak |
+|------|---------|------|--------------|
+| 1 | tilt to one side (roll — ear toward shoulder) | 3.5° | 3 s |
+| 2 | look off to one side (yaw) | 12° | 2 s |
+| 3 | tilt to the other side (roll) | 3.5° | 3 s |
+| 4 | look off to the other side (yaw) | 12° | 2 s |
+
+then it starts again from step 1.
+
+- **Ten seconds of nothing between every gesture**, timed from the moment the head is back at
+  centre, not from the start of the previous move. The stillness is the point: a gesture every
+  few seconds is a screensaver.
+- Every move is eased in and out over about 1.5 s (smoothstep), and nothing is ever faster than
+  that. Roll never exceeds 4°; the look is a third of the drag limit, so it is a glance, not a
+  turn.
+- The cycle runs only while the state is `ACTIVE` with no speech playing and no pointer drag.
+  Speaking or being dragged interrupts it: the head eases back to centre and the ten-second
+  wait restarts from the beginning when the interruption ends. A gesture in progress is never
+  cut short — it returns along the same easing curve.
+- Idle offsets are *added* to the drag orientation rather than replacing it:
+  `RY(yaw + idleYaw) · RX(pitch) · RZ(idleRoll)`. Roll is applied innermost, so it is a tilt of
+  the head's own axis whatever way the head is facing.
+- `prefers-reduced-motion: reduce` disables the cycle, as does `DroneFace.setIdleMotion(false)`
+  (for a screenshot, a recording, or a test that needs the head still). The cycle is not
+  persisted; it defaults to on.
 
 ## 10. Lip sync (amplitude-driven)
 
@@ -238,6 +272,8 @@ window.DroneFace = {
   setAmbient(on),               // deprecated alias for setSound
   ambient,                      // deprecated alias for sound
   setOrientationLimits({yaw, pitch}),
+  setIdleMotion(on),            // the waiting cycle in §9.2; off for screenshots or a test
+  idleMotion,                   // read-only: on, and not suppressed by reduced motion
   on(event, handler)            // 'stateChange', 'speechStart', 'speechEnd'
 }
 ```
@@ -264,7 +300,7 @@ window.DroneFace = {
 
 **Voice settings control.** A slider control sits beside the text box and opens a panel with the endpoint URL, model name and voice name, persisted in `localStorage`, plus a status line naming the mode (`TTS endpoint`, `TTS stream`, `browser voice`, `simulated`) and the last result. The voices the endpoint reports are shown as chips; clicking one selects it and speaks a sample line, so auditioning nine voices is nine clicks. `?endpoint=…&model=…&voice=…` seeds all three from the URL, so a room can be configured without opening devtools.
 
-**v1 test harness.** The **Generate voice** button and `DroneFace.setMouth(open, width)` let the mouth be tested without a backend. A file-picker button (shown only with `?debug=1` in the URL) for loading a local audio file is recommended. `tools/voice-paths-check.mjs` serves the repo plus three fake TTS endpoints (legacy shape, OpenAI shape, 404), drives the built page over CDP, and asserts that each path moves the mouth and reports itself honestly.
+**v1 test harness.** The **Generate voice** button and `DroneFace.setMouth(open, width)` let the mouth be tested without a backend. A file-picker button (shown only with `?debug=1` in the URL) for loading a local audio file is recommended. `tools/voice-paths-check.mjs` serves the repo plus three fake TTS endpoints (legacy shape, OpenAI shape, 404), drives the built page over CDP, and asserts that each path moves the mouth and reports itself honestly. It also asserts the §9.2 glance on screen — that the lit mass slides sideways and comes back — so idle motion is checked against rendered pixels, not only against the pose variables.
 
 ## 12. Performance and compatibility
 
@@ -325,6 +361,7 @@ Because the swarm shimmers constantly, a single before/after screenshot proves n
 9. Resizing the window does not break the layout.
 10. Pressing Disperse (when not speaking) returns the drones to slow random flight within about 4 seconds with no jumps, and Reform rebuilds the face. Ten consecutive cycles show no drift, stuck drones or frame-rate decline.
 11. The face looks generic and neutral, not like a specific person.
+12. Left alone once formed, the head runs the idle cycle from §9.2: a 3.5° tilt, a 12° look, the same to the other side, with about 10 seconds of stillness between gestures and no move faster than about 1.5 seconds. Starting speech stops it and brings the head back to centre.
 12. A streaming entry point (`attachStream`) exists alongside the file path, so the later backend choice needs no change to the face code.
 13. The sound toggle mutes and unmutes the background music without clicks or hum, ducks while speech plays, returns afterwards, and never moves the mouth. Nothing in the page constructs an oscillator.
 14. The headless self-test (`tools/selftest.html`) passes all assertions.

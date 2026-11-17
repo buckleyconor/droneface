@@ -28,21 +28,22 @@ Open `drone-face.html` directly in a browser (no network needed), or:
 
 ## Test
 
-    npm test             # headless Chromium self-test (53 assertions)
+    npm test             # headless Chromium self-test (67 assertions)
     npm run check:voice  # every voice path, against real rendering
     npm run check:sound  # music bed, master mute, ducking, real gestures
 
 `npm test` covers the state machine, face geometry (eye/nose/mouth centroids, blink
-squash, jaw drop), drag orientation limits, sound toggle, lip-sync DSP (adaptive gain +
-sibilant-driven lip width), the TTS wire format against a fake `fetch`, the voice
-fallback, and 10 consecutive disperse/reform cycles.
+squash, jaw drop), drag orientation limits, the idle cycle (gesture order, peaks, holds,
+the 10 s gaps, and that speech holds the head at centre), sound toggle, lip-sync DSP
+(adaptive gain + sibilant-driven lip width), the TTS wire format against a fake `fetch`, the
+voice fallback, and 10 consecutive disperse/reform cycles.
 
 `npm run check:voice` serves the repo plus fake TTS endpoints (legacy body, OpenAI body,
 SSE stream, 404) and drives the built page over CDP, asserting that every way the face can
-talk actually moves the mouth and reports what it did. If the lab's qwen3-tts box answers on
-port 8091 it is tested too, against the real model. It is separate from `npm test` because
-it needs real timing and a real audio decode — under `--dump-dom` the audio clock never
-advances.
+talk actually moves the mouth and reports what it did. It also waits for the idle glance and
+measures it on screen. If the lab's qwen3-tts box answers on port 8091 it is tested too,
+against the real model. It is separate from `npm test` because it needs real timing and a
+real audio decode — under `--dump-dom` the audio clock never advances.
 
 Two of its assertions look at the rendered page rather than at JavaScript values: the mouth
 shader uniforms are read back, and a pair of screenshots taken across the mouth opening is
@@ -74,7 +75,8 @@ hidden).
     start()  disperse()  state  attachAudio(src)  speakFromUrl(url)  speak(text)  stop()
     setEndpoint(url)  setVoice(name)  setModel(name)  voiceStatus()  attachStream(rate)
     setMouth(open, width)
-    setSound(on)  sound  setOrientationLimits({yaw, pitch})  on(event, cb)
+    setSound(on)  sound  setOrientationLimits({yaw, pitch})  setIdleMotion(on)  idleMotion
+    on(event, cb)
 
 `setAmbient(on)` and `ambient` still work as deprecated aliases for `setSound` and
 `sound`; they are the sound toggle's state, which mutes the music and never the
@@ -187,5 +189,9 @@ geometry, not aesthetics.
   150–250 KB estimate. The embedded music track is on top of that.
 - Drag rotation is limited to yaw ±35° / pitch ±25° so the unmodelled back of the
   head is never visible.
+- While it is formed and silent the head runs a slow waiting cycle — a 3.5° tilt, a 12°
+  glance, the same the other way, with 10 s of nothing in between — so a face that has
+  nothing to say is not a paused video. Speech, a drag, `prefers-reduced-motion` or
+  `DroneFace.setIdleMotion(false)` stop it and bring the head back to centre.
 - The mouth is amplitude + spectral-brightness driven (not viseme-accurate);
   visemes are a documented future upgrade behind the `setMouth` seam.

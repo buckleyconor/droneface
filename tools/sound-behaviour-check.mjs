@@ -8,21 +8,35 @@
 // sleep next to a 0.3 s ramp is a flake waiting to happen.
 import { createServer } from 'node:http';
 import { readFile, writeFile, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { extname, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { speechLikeWav } from './test-audio.mjs';
+
+const MUSIC_FILE = '4ever-faded.mp3';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const target = process.argv[2] ? resolve(process.argv[2]) : resolve(root, 'drone-face.html');
 const scratch = resolve(root, '.sound-behaviour.html');
 const html = (await readFile(target, 'utf8')).replace(
   '</body>', '<div id="go" style="position:fixed;left:10px;top:60px;width:100px;height:30px;background:#fff"></div>\n</body>');
-const mp3 = await readFile(resolve(root, '4ever-faded.mp3'));
+// The bed is baked into the build, so this check can only run against a build that has a
+// track in it. The track itself is not in the repo (it is someone's music, and a repo with
+// no audio in it is a repo you can publish), so a music-less build skips rather than fails.
+const trackPath = resolve(root, MUSIC_FILE);
+const mp3 = existsSync(trackPath) ? await readFile(trackPath) : null;
+if (!mp3) {
+  console.log(`note: no ${MUSIC_FILE} in the repo root — this build has no music bed to check`);
+  console.log('SKIPPED');
+  await rm(scratch, { force: true });
+  process.exit(0);
+}
 
 const server = createServer(async (req, res) => {
   const p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   if (p === '/') { res.writeHead(200, { 'content-type': 'text/html' }); return res.end(html); }
-  if (p === '/tts') { res.writeHead(200, { 'content-type': 'audio/mpeg' }); return res.end(mp3.subarray(0, 30000)); }
+  if (p === '/tts') { res.writeHead(200, { 'content-type': 'audio/wav' }); return res.end(speechLikeWav(2.5)); }
   let data;
   try { data = await readFile(resolve(root, '.' + p)); }
   catch { res.writeHead(404); res.end('no'); return; }

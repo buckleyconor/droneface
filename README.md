@@ -20,6 +20,12 @@ speaks via the browser's `speechSynthesis` until a real TTS endpoint is wired in
     npm run build        # -> drone-face.html (the deliverable, single file)
     npm run dev          # -> dist/bundle.js; open src/index.html (or serve)
 
+Neither the built `drone-face.html` nor the music track is in git: the file is generated, and
+the track is music someone else may own, which a repo you want to publish should not carry.
+Put any MP3 you like at `4ever-faded.mp3` in the repo root and `npm run build` inlines it as
+a data URI; without one, the build warns and produces the same face with a silent bed, stamped
+`+nomusic`. Hand the single file over as a release attachment, not as a committed file.
+
 ## Run
 
 Open `drone-face.html` directly in a browser (no network needed), or:
@@ -61,14 +67,19 @@ hidden).
 
     src/main.js            application code (ordered per spec §13)
     src/index.html         markup + styles + music bed; template for the built file
-    4ever-faded.mp3        background music track (embedded by build.js)
     build.js               esbuild bundle + inline into drone-face.html
     tools/selftest.html    self-test harness
     tools/run-selftest.mjs node runner (serves the repo, drives Chromium)
+    tools/test-audio.mjs   generated speech-like WAV the checks analyse
     tools/inject-music.mjs add/refresh the music bed in a built HTML file
     tools/remove-chord.mjs strip the retired chord pad from a built HTML file
     tools/voice-paths-check.mjs  end-to-end voice/lip-sync check (npm run check:voice)
     tools/sound-behaviour-check.mjs  music bed and master mute check (npm run check:sound)
+
+Not in git, on purpose: `drone-face.html` (build output) and `4ever-faded.mp3` (your music).
+`npm run check:sound` skips itself when the track is absent — there is no bed to check — while
+`npm test` and `npm run check:voice` pass either way, because the audio they need is
+generated.
 
 ## JS API (`window.DroneFace`)
 

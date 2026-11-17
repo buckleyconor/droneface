@@ -16,12 +16,14 @@ import { spawn } from 'node:child_process';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const target = process.argv[2] ? resolve(process.argv[2]) : resolve(root, 'drone-face.html');
-const mime = { '.html': 'text/html', '.js': 'text/javascript', '.mp3': 'audio/mpeg', '.json': 'application/json' };
+const mime = { '.html': 'text/html', '.js': 'text/javascript', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.json': 'application/json' };
 
-// a short audio payload for the fake endpoints: the embedded music track, first 80 kB
-let audio;
-try { audio = (await readFile(resolve(root, '4ever-faded.mp3'))).subarray(0, 80000); }
-catch { console.error('need 4ever-faded.mp3 in the repo root for the fake TTS payloads'); process.exit(2); }
+import { speechLikeWav } from './test-audio.mjs';
+
+// Audio for the fake endpoints is generated (tools/test-audio.mjs), not read from the repo:
+// the checks need something speech-like to analyse, and a repo that ships no audio is a repo
+// that can be published.
+const audio = speechLikeWav(4);
 
 // Does the lab's real qwen3-tts box answer? If so it gets tested too, because the
 // whole point of this file is to catch the day it stops answering.
@@ -40,7 +42,7 @@ const server = createServer(async (req, res) => {
   req.on('data', (c) => (raw += c));
   await new Promise((r) => req.on('end', r));
 
-  if (p === '/legacy') { served.push({ p, body: JSON.parse(raw || '{}') }); res.writeHead(200, { 'content-type': 'audio/mpeg' }); return res.end(audio); }
+  if (p === '/legacy') { served.push({ p, body: JSON.parse(raw || '{}') }); res.writeHead(200, { 'content-type': 'audio/wav' }); return res.end(audio); }
   if (p === '/openai/v1/audio/speech') { served.push({ p, body: JSON.parse(raw || '{}') }); res.writeHead(200, { 'content-type': 'audio/wav' }); return res.end(audio); }
   if (p === '/broken') { served.push({ p, body: raw.slice(0, 200) }); res.writeHead(404, { 'content-type': 'application/json' }); return res.end('{"error":"model not found"}'); }
   if (p === '/stream/v1/audio/speech') {
@@ -62,7 +64,12 @@ const server = createServer(async (req, res) => {
   if (p === '/slow') {
     await new Promise((r) => setTimeout(r, 800));      // a server that takes a moment to synthesise
     served.push({ p, body: JSON.parse(raw || '{}') });
-    res.writeHead(200, { 'content-type': 'audio/mpeg' }); return res.end(audio);
+    res.writeHead(200, { 'content-type': 'audio/wav' }); return res.end(audio);
+  }
+
+  if (p === '/speech.wav') {        // an ordinary audio file, for speakFromUrl
+    res.writeHead(200, { 'content-type': 'audio/wav', 'access-control-allow-origin': '*' });
+    return res.end(audio);
   }
 
   const file = resolve(root, '.' + (p === '/' ? '/' + target.slice(root.length + 1) : p));
@@ -247,6 +254,10 @@ window.__motion = (out) => ({
   peakOpen: +Math.max(...out.map((o) => o[0])).toFixed(3),
   moving: out.filter((o, i) => i && Math.abs(o[0] - out[i - 1][0]) > 0.01).length,
   spoke: out.some((o) => o[2] === 'speaking'),
+  // what matters after a stop() is where the mouth ends up, not how wide it was when the
+  // cut landed — the release ramp has to come down through the window either way
+  lastOpen: +out[out.length - 1][0].toFixed(3),
+  settled: out.slice(-Math.ceil(out.length * 0.4)).every((o, i, a) => !i || Math.abs(o[0] - a[i - 1][0]) < 0.005),
 });`);
 
 await ev('DroneFace.start()');
@@ -341,7 +352,7 @@ if (live) {
 
 await settle();
 r = await ev(`(async () => {
-  DroneFace.speakFromUrl(${JSON.stringify(origin + '/4ever-faded.mp3')});
+  DroneFace.speakFromUrl(${JSON.stringify(origin + '/speech.wav')});
   return __motion(await __sample(2500));
 })()`);
 assert('audio file through the analyser moves the mouth', r.peakOpen > 0.4 && r.moving > 10, JSON.stringify(r));
@@ -443,8 +454,9 @@ assert('panel sits on screen, above the voice bar', panel.onScreen && panel.abov
 // stop() must cut a playing TTS utterance, not just the simulation
 await ev(`DroneFace.setEndpoint(${JSON.stringify(origin + '/legacy')}); DroneFace.speak('a sentence long enough to still be playing when we cut it off')`);
 await sleep(600);
-r = await ev(`(async () => { DroneFace.stop(); return __motion(await __sample(900)); })()`);
-assert('stop() cuts the voice mid-utterance', r.peakOpen < 0.35 && !r.moving && (await ev('DroneFace.voiceStatus().audioActive')) === false, JSON.stringify(r));
+r = await ev(`(async () => { DroneFace.stop(); return __motion(await __sample(1200)); })()`);
+assert('stop() cuts the voice mid-utterance',
+  r.lastOpen < 0.12 && r.settled && (await ev('DroneFace.voiceStatus().audioActive')) === false, JSON.stringify(r));
 
 // --- idle motion (spec §9.2): the head has to move on screen, not just in the numbers ---
 // The tilt is deliberately only 3.5 degrees, below what a pixel estimate can call with

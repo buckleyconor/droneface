@@ -5,10 +5,12 @@
 // development (open src/index.html).
 import { build } from 'esbuild';
 import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const MUSIC_FILE = '4ever-faded.mp3';   // background music bed, embedded as a data URI
+const MUSIC_FILE = '4ever-faded.mp3';   // background music bed, embedded as a data URI;
+                                        // deliberately not in git — see README
 
 const root = dirname(fileURLToPath(import.meta.url));
 const dev = process.argv[2] === 'dev';
@@ -51,17 +53,35 @@ async function run() {
   if (existsSync(mp3)) {
     music = 'data:audio/mpeg;base64,' + readFileSync(mp3).toString('base64');
   } else {
-    console.warn(`warning: ${MUSIC_FILE} not found — music bed will be inert`);
+    console.warn(`warning: ${MUSIC_FILE} not found — building WITHOUT the music bed.`);
+    console.warn('         the single file will work, silently. Put your own track at');
+    console.warn(`         ${MUSIC_FILE} and build again if you want the bed in it.`);
   }
   const withMusic = inlined.replace(musicNeedle, () => 'src="' + music + '"');
 
+  // Stamp which build this is, because "the face is frozen" and "you are looking at the
+  // old file" are the same problem viewed from two ends. ?debug=1 shows it.
+  const stampValue = buildStamp(existsSync(mp3));
+  const metaRe = /<meta name="droneface:build" content="source">/;
+  if (!metaRe.test(withMusic)) throw new Error('src/index.html is missing the droneface:build meta tag');
+  const stamped = withMusic.replace(metaRe, () => `<meta name="droneface:build" content="${stampValue}">`);
+
   const out = resolve(root, 'drone-face.html');
-  writeFileSync(out, withMusic);
+  writeFileSync(out, stamped);
   const kb = statSync(out).size / 1024;
-  console.log(`drone-face.html written: ${kb.toFixed(1)} KB (js ${(js.length / 1024).toFixed(1)} KB)`);
+  console.log(`drone-face.html written: ${kb.toFixed(1)} KB (js ${(js.length / 1024).toFixed(1)} KB) build ${stampValue}`);
 }
 
 mkdirSync(resolve(root, 'dist'), { recursive: true });
+
+function buildStamp(withMusic) {
+  let version = '0.0.0';
+  try { version = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version || version; } catch (_) {}
+  let sha = '';
+  try { sha = execSync('git rev-parse --short HEAD', { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch (_) {}
+  return [`${version}-${sha || 'uncommitted'}`, withMusic ? '' : 'nomusic'].filter(Boolean).join('+');
+}
+
 run().catch((e) => {
   console.error(e);
   process.exit(1);

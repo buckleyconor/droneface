@@ -1,2 +1,12 @@
 node_modules/
 dist/
+
+# Neither of these belongs in git, and for different reasons.
+# The deliverable is generated; the track is someone's music, and a repo that carries
+# no audio is a repo you can publish. build.js inlines the track when it finds one and
+# warns, loudly, when it does not. Attach the built file to a release to hand it over.
+drone-face.html
+4ever-faded.mp3
+
+# scratch files the checks write next to the page they serve
+.*.html

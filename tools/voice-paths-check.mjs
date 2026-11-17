@@ -168,7 +168,7 @@ async function stash(name, b64) {
 // differing MORE than an equal-spaced same-condition pair, in the band where the mouth is.
 async function mouthOpensOnScreen() {
   const vp = await ev('({ w: innerWidth, h: innerHeight })');
-  const clip = { x: Math.round(vp.w * 0.2), y: Math.round(vp.h * 0.55), width: Math.round(vp.w * 0.6), height: Math.round(vp.h * 0.35), scale: 1 };
+  const clip = { x: Math.round(vp.w * 0.25), y: Math.round(vp.h * 0.6), width: Math.round(vp.w * 0.5), height: Math.round(vp.h * 0.3), scale: 1 };
   // Every pair is 250 ms apart, so drift contributes the same amount to each:
   // C1,C2 closed | C2,O1 across the change | O1,O2 open.
   const seq = [[0, 400], [0, 250], [1, 250], [1, 250]];
@@ -249,6 +249,7 @@ const uniformCheck = await ev(`(async () => {
 assert('the mouth uniforms track the computed mouth', uniformCheck.hi.mouthOpen > 0.8 && uniformCheck.lo.mouthOpen < 0.1, JSON.stringify(uniformCheck));
 const px = await mouthOpensOnScreen();
 const baseline = (px.same[0] + px.same[1]) / 2;
+console.log(`   mouth pixel evidence: across the change ${px.cross} vs same-state drift ${px.same.join('/')} (${px.size})`);
 assert('the mouth visibly opens on screen, not just in the numbers',
   px.cross > 3 && px.cross > 1.5 * baseline, JSON.stringify(px));
 

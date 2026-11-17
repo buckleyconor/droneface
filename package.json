@@ -3,11 +3,13 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Drone Swarm Face frontend — a single offline HTML file (three.js, ~8,500 drones)",
+  "description": "Drone Swarm Face frontend \u2014 a single offline HTML file (three.js, ~8,500 drones)",
   "scripts": {
     "build": "node build.js",
     "dev": "node build.js dev",
-    "test": "node tools/run-selftest.mjs"
+    "test": "node tools/run-selftest.mjs",
+    "check:voice": "node tools/voice-paths-check.mjs",
+    "check:sound": "node tools/sound-behaviour-check.mjs"
   },
   "dependencies": {
     "three": "^0.170.0"

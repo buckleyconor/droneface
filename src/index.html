@@ -70,6 +70,12 @@
   #soundBtn.on .wave { opacity: 1; }
   #soundBtn.off .cone, #soundBtn.off .arc { opacity: 0.4; }
 
+  /* music-bed:start */
+  /* No styles needed: the speaker button (#soundBtn, owned by the bundle) is the one
+     and only sound control. The separate music note button went away when the
+     generated chord pad did. */
+  /* music-bed:end */
+
   #voiceBar {
     position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
     z-index: 11; display: flex; gap: 8px; align-items: center;
@@ -92,6 +98,51 @@
   }
   #voiceBtn:hover { box-shadow: 0 0 22px rgba(25, 230, 211, 0.4); background: rgba(2, 6, 13, 0.75); }
   #voiceBtn:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+
+  /* TTS settings: where the voice comes from. A demo box gets pointed at a
+     different qwen3-tts endpoint per room, so this is a control, not a devtools step. */
+  #ttsBtn {
+    flex: none; display: grid; place-items: center; width: 40px; height: 40px;
+    color: var(--turquoise); background: rgba(2, 6, 13, 0.55);
+    border: 1px solid rgba(25, 230, 211, 0.35); border-radius: 999px;
+    cursor: pointer; padding: 0; transition: box-shadow 0.2s, color 0.2s;
+  }
+  #ttsBtn:hover { box-shadow: 0 0 18px rgba(25, 230, 211, 0.35); color: var(--cyan); }
+  #ttsBtn:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+  #ttsPanel {
+    position: fixed; left: 50%; bottom: 74px; transform: translateX(-50%);
+    z-index: 11; width: min(86vw, 620px);
+    display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center;
+    padding: 12px; border-radius: 12px;
+    background: rgba(2, 6, 13, 0.86); border: 1px solid rgba(25, 230, 211, 0.28);
+    backdrop-filter: blur(6px);
+  }
+  #ttsPanel[hidden] { display: none; }
+  #ttsPanel label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  #ttsPanel input {
+    font: inherit; font-size: 12px; color: var(--ink);
+    background: rgba(2, 6, 13, 0.7); border: 1px solid rgba(25, 230, 211, 0.3);
+    border-radius: 8px; padding: 8px 10px; outline: none; min-width: 0;
+  }
+  #ttsPanel input:focus { border-color: var(--turquoise); }
+  #ttsPanel input[type="text"].small { width: 9em; flex: none; }
+  #ttsStatus {
+    grid-column: 1 / -1; margin: 0; font-size: 11px; line-height: 1.45;
+    letter-spacing: 0.04em; color: #86a8cc; overflow-wrap: anywhere;
+  }
+  #ttsStatus b { color: var(--turquoise); font-weight: 500; }
+  #ttsStatus.warn b { color: #ffcf7a; }
+  /* voice chips: audition a voice in one click instead of typing it and pressing Generate */
+  #ttsVoices { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+  #ttsVoices[hidden] { display: none; }
+  #ttsVoices button {
+    font: inherit; font-size: 11px; letter-spacing: 0.06em; color: #9fc4e8;
+    background: rgba(2, 6, 13, 0.55); border: 1px solid rgba(25, 230, 211, 0.22);
+    border-radius: 999px; padding: 5px 11px; cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  }
+  #ttsVoices button:hover { color: var(--cyan); border-color: rgba(25, 230, 211, 0.5); }
+  #ttsVoices button[aria-pressed="true"] { color: #02060d; background: var(--turquoise); border-color: var(--turquoise); }
 
   #fallback {
     position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
@@ -117,9 +168,33 @@
   </svg>
 </button>
 
+<!-- music-bed:start -->
+<audio id="musicTrack" src="../4ever-faded.mp3" loop preload="auto" hidden></audio>
+<!-- music-bed:end -->
+
 <div id="voiceBar">
+  <button id="ttsBtn" type="button" aria-expanded="false" aria-controls="ttsPanel" aria-label="Voice settings" title="Voice settings">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <path d="M4 8h10M18 8h2M4 16h2M10 16h10"/>
+      <circle cx="16" cy="8" r="2"/><circle cx="8" cy="16" r="2"/>
+    </svg>
+  </button>
   <input id="voiceText" type="text" placeholder="Type something for the face to say…" maxlength="300" aria-label="Text to speak">
   <button id="voiceBtn" type="button">Generate voice</button>
+</div>
+
+<div id="ttsPanel" hidden>
+  <label for="ttsEndpoint">TTS endpoint URL</label>
+  <input id="ttsEndpoint" type="text" spellcheck="false" placeholder="http://10.x.x.x:8000/v1/audio/speech  (blank = browser voice)">
+  <label for="ttsModel">Model</label>
+  <input id="ttsModel" class="small" type="text" spellcheck="false" placeholder="model" list="ttsModelList">
+  <datalist id="ttsModelList"></datalist>
+  <label for="ttsVoice">Voice</label>
+  <input id="ttsVoice" class="small" type="text" spellcheck="false" placeholder="voice" list="ttsVoiceList">
+  <datalist id="ttsVoiceList"></datalist>
+  <p id="ttsStatus">Voice not used yet — press <b>Generate voice</b> to test the endpoint.</p>
+  <div id="ttsVoices" hidden></div>
 </div>
 
 <div id="fallback" hidden>
@@ -128,5 +203,94 @@
 </div>
 
 <script src="../dist/bundle.js"></script>
+
+<!-- music-bed-script:start -->
+<script>
+/* Background music bed. Deliberately outside the bundle: it only reads the public
+   DroneFace API, so it survives any rebuild of src/main.js and can be injected into
+   an already-built file (tools/inject-music.mjs).
+
+   One control: the speaker button (bottom right, #soundBtn) is the master sound
+   mute. Off silences the music; the voice is never muted, so the face still talks
+   when asked. The generated chord pad this track replaced is gone. Ducking, level
+   and the on/off preference all live in the page's sound flag — no key of its own. */
+(function () {
+  var LEVEL = 0.20;   // music level; well under the voice
+  var DUCK = 0.35;    // multiplier while speech is playing
+  var FADE = 0.12;    // ease per frame, roughly 300 ms
+
+  var track = document.getElementById('musicTrack');
+  var master = document.getElementById('soundBtn');   // owned by the bundle
+  if (!track) return;
+  if (!track.getAttribute('src')) { if (master) master.style.display = 'none'; return; }   // no track baked in
+
+  var speaking = false, vol = 0, animating = false;
+
+  function soundOn() {
+    var api = window.DroneFace;
+    if (!api) return true;
+    return (api.sound !== undefined ? api.sound : api.ambient) !== false;
+  }
+  function target() { return soundOn() ? LEVEL * (speaking ? DUCK : 1) : 0; }
+
+  function step() {
+    var t = target(), d = t - vol;
+    vol = Math.abs(d) < 0.002 ? t : vol + d * FADE;
+    track.volume = vol;
+    if (vol === t) {
+      animating = false;
+      if (t === 0) track.pause();
+    } else {
+      requestAnimationFrame(step);
+    }
+  }
+  function envelope() { if (!animating) { animating = true; requestAnimationFrame(step); } }
+
+  var GESTURES = ['pointerdown', 'keydown', 'touchstart'];
+  function disarm() { GESTURES.forEach(function (g) { window.removeEventListener(g, onGesture, true); }); }
+  function onGesture(e) {
+    disarm();
+    var t = e && e.target;
+    // A first click that lands on the mute control is also a mute request: let the
+    // control's own handler (still inside this gesture) decide, so the bed does not
+    // blip on and straight back off.
+    if (master && t && master.contains(t)) { sync(); return; }
+    play();
+  }
+  function arm() { disarm(); GESTURES.forEach(function (g) { window.addEventListener(g, onGesture, true); }); }
+
+  function play() {
+    if (!soundOn()) return;
+    var p;
+    try { p = track.play(); } catch (e) { arm(); return; }
+    if (p && p.catch) p.catch(function (err) {
+      // Browsers block audible autoplay without a user gesture: start on the first one.
+      if (err && err.name === 'NotSupportedError') { if (master) master.style.display = 'none'; return; }
+      arm();
+    });
+    envelope();
+  }
+
+  // The speaker button belongs to the bundle; its handler was bound first, so by the
+  // time this runs the sound flag is already flipped. Mirror it onto the music.
+  function sync() {
+    if (target() > 0) { if (track.paused) play(); envelope(); } else envelope();
+  }
+
+  if (master) {
+    master.title = 'Sound on/off — mutes the music, never the voice';
+    master.addEventListener('click', sync);
+  }
+
+  if (window.DroneFace && window.DroneFace.on) {
+    window.DroneFace.on('speechStart', function () { speaking = true; envelope(); });
+    window.DroneFace.on('speechEnd', function () { speaking = false; envelope(); });
+    window.DroneFace.on('stateChange', sync);           // Start / Reform / setSound()
+  }
+
+  sync();   // try on load; otherwise the first click or key press starts it
+})();
+</script>
+<!-- music-bed-script:end -->
 </body>
 </html>

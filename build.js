@@ -4,9 +4,11 @@
 // (drone-face.html); `node build.js dev` writes an unminified bundle for
 // development (open src/index.html).
 import { build } from 'esbuild';
-import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+const MUSIC_FILE = '4ever-faded.mp3';   // background music bed, embedded as a data URI
 
 const root = dirname(fileURLToPath(import.meta.url));
 const dev = process.argv[2] === 'dev';
@@ -39,8 +41,22 @@ async function run() {
   // function replacement: avoids $& / $1 expansion in the bundled JS
   const inlined = html.replace(needle, () => '<script>\n' + js + '\n</script>');
 
+  // Bake the music track into the <audio> element so the output stays one file.
+  const mp3 = resolve(root, MUSIC_FILE);
+  const musicNeedle = 'src="../' + MUSIC_FILE + '"';
+  if (!html.includes(musicNeedle)) {
+    throw new Error('src/index.html is missing the music <audio src> tag');
+  }
+  let music = '';
+  if (existsSync(mp3)) {
+    music = 'data:audio/mpeg;base64,' + readFileSync(mp3).toString('base64');
+  } else {
+    console.warn(`warning: ${MUSIC_FILE} not found — music bed will be inert`);
+  }
+  const withMusic = inlined.replace(musicNeedle, () => 'src="' + music + '"');
+
   const out = resolve(root, 'drone-face.html');
-  writeFileSync(out, inlined);
+  writeFileSync(out, withMusic);
   const kb = statSync(out).size / 1024;
   console.log(`drone-face.html written: ${kb.toFixed(1)} KB (js ${(js.length / 1024).toFixed(1)} KB)`);
 }

@@ -33,10 +33,10 @@ The visual reference (see `reference_image.png` in this directory) is a night-ti
 | Packaging | Fully offline: three.js inlined in the HTML file |
 | Lip sync | Audio amplitude only: simple jaw/mouth open-close |
 | Renderer | three.js (WebGL) |
-| Colour | Face turquoise; hair band bottle green; dark background |
+| Colour | Face turquoise; accent group (hair, brows, lid rims) lavender by default, switchable with `?accent=`; dark background |
 | Face look | Generic, neutral face; not modelled on a specific person |
 | Swarm lifecycle | Can disperse back to free flight and re-form, repeatedly |
-| Ambient sound | Included, with a control to turn it off and on |
+| Background music | Included: an embedded looping track, muted by the sound toggle (the generated chord pad was removed in favour of it) |
 | Audio delivery | Undecided (complete files or streaming); the frontend supports both through one interface |
 | TTS call | Frontend POSTs text to a configurable qwen3-tts style endpoint; offline fallback to the browser's `speechSynthesis` |
 
@@ -78,14 +78,14 @@ The flow is a loop: `DISPERSING` returns to `IDLE`, and Start (shown as Reform) 
 - The face occupies roughly 75 to 85% of the viewport height, centred.
 - Start button: centred, minimal, turquoise outline with subtle glow; hover and focus states required; keyboard accessible.
 - Disperse control: a small, unobtrusive text button in a corner, visible only in `ACTIVE`; keyboard accessible. After dispersal the centred button returns, labelled Reform.
-- Sound toggle: a small speaker icon button in the opposite corner, visible in every state; keyboard accessible, with an accessible label ("Sound on" or "Sound off") and a clear on/off icon state.
+- Sound toggle: a small speaker icon button in the bottom-right corner, visible in every state; keyboard accessible, with an accessible label ("Sound on" or "Sound off") and a clear on/off icon state. It is the single sound control: it mutes the background music and never the voice. There is no separate music control and no generated ambience — one button, one behaviour.
 - Voice control: a text box (bottom centre) and a **Generate voice** button. Typing text and pressing the button forms the face (if needed) and speaks the words using the browser's `speechSynthesis` as the demo voice, with the mouth moving to a synthetic speech envelope until a real TTS endpoint is wired in.
 
 ## 6. Visual design
 
 - **Background:** near-black blue, `#02060d`, optionally with a very faint vertical gradient.
 - **Face drone colour (turquoise):** `#19e6d3`. Per-drone variation: shift hue slightly toward cyan `#2ad0ff` and lightness by ±10% to give a shimmering surface.
-- **Hair drone colour (bottle green):** base `#18c990`, with the same ±10% lightness variation — brightened so the hair band reads clearly against the dark background; the value is a tunable constant judged by eye.
+- **Accent drone colour (lavender by default):** `#d9b8f0`, with the same ±10% lightness variation. The accent group is everything that is not skin — hair strands, brows, eyelid rims, lip peaks — and it rims in its own brighter tone (`uColorHair * 1.8`) so the crown reads as a halo. `?accent=lavender|ice|warm` re-skins it at load without a rebuild (`ice` `#c4fbf4`, `warm` `#ffe2b0`).
 - **Edge emphasis:** drones on silhouette edges (where the surface normal is perpendicular to the view direction) render brighter and slightly larger, tinted toward cyan-white `#7ff5ea`. This reproduces the bright rim in `reference_image.png`.
 - **Depth cue:** points farther from the camera are slightly dimmer and smaller.
 - **Relief shading:** protruding areas (nose bridge/tip, cheekbones, brow edge) are brighter and recessed areas (eye sockets, nostrils, under the brow and lower lip, sides of the nose) are dimmer — the reference shades by dot brightness and density, not by lighting.
@@ -99,31 +99,32 @@ The face is generated once at page load (target under 300 ms) as a set of 3D tar
 
 **Look: generic.** The face is neutral and gender-neutral, with no resemblance to a real person: moderate brow and cheekbone relief, an average-width straight nose, medium lips, a rounded chin, and a hair outline with no specific hairstyle. Each feature is a named parameter group at the top of the file (for example `noseLength`, `lipFullness`, `jawWidth`) so the look can be tuned without changing the generator logic.
 
-**Method (recommended): signed-distance or height-field head.**
+**Method: a height-field head sampled on a hexagonal lattice.**
 
-1. Define a base head as a face-shaped outline: a vertical half-height of 1.0 (hair crest y +1, chin y -1) and a depth of 0.55, with a half-width profile that is widest at the cheekbones (0.60) and narrows toward the forehead (0.52) and jaw/chin (down to 0.24) — so it is not a symmetric egg. Feature positions, measured from `reference_image.png` and expressed as a fraction of head height from the hair crest (0%) to the chin (100%): hairline 16%, eye line 49%, nose tip 68%, mouth line 82%; eye width 23% of face width, eye-centre separation 57%, nose width 26%, mouth width 39%. See `reference-image-notes.md` for the full measurement set.
-2. Add facial relief using smooth Gaussian bumps and dips:
-   - brow ridge, eye sockets, nose bridge, nose tip and nostrils, cheekbones, upper and lower lip, chin, jaw line.
-3. Sample points on the front surface using a jittered grid, then thin them by a density field that is denser on protruding features (nose bridge/tip, lips, cheekbones, jaw rim) and sparser in recesses (eye sockets, nostrils, mouth line) — shading by dot density, as in the reference, rather than drawn-on lines.
-4. Add secondary groups:
-   - **Hair:** wavy bottle-green strands flowing over the crown (see section 6), named `hair` in the attributes.
-   - **Eyes:** a small dense cluster of drones tracing the eyelid rim around each eye socket. These are the blink group: a blink moves them toward the socket centre (with a slight dim), then back.
-5. Each point stores attributes: `target` (vec3), `group` (`face`, `hair`, `mouth`, `eye`), `mouthWeight` (0 to 1), `blinkWeight` (0 to 1, nonzero on eyelid drones), `reserve` (0 or 1; reserve drones are hidden while dispersed), `seed` (random), `edgeFactor`.
+1. **Profile.** The head is not an ellipsoid. Its half-width comes from a monotone cubic Hermite curve (`pchip`) through points traced on `reference_image.png` (the measured feature ratios are in `reference-image-notes.md`), stored as half-width *squared* so the jaw shoulder is smooth, and above `y = 0.62` a separate cranium dome (`a = 0.585`, `b = 0.38`) takes over — that is what gives the flat-ish crown instead of an egg. A second `pchip` gives how far forward the surface sits at each height. Monotone interpolation is deliberate: Catmull-Rom or a polynomial overshoots, and the profile bulges where it should not.
+2. **Surface.** `surfaceZ(x, y)` = depth profile scaled across the row (`(1 - r^2.5)^0.4`, r = |x|/half-width) plus feature relief, cross-faded out over the last 22% of the row so features never poke through the outline. Relief is Gaussian bumps and dips (sockets, brow, cheekbones, lips, chin, jaw) plus a **nose profile** rather than bumps: a ridge from brow to tip that widens as it descends, with a Gaussian tip. The mouth line is a shallow smile curve with a thin crease.
+3. **Sampling.** A hexagonal lattice: rows at `d*sqrt(3)/2`, alternate rows offset half a step, points placed by **arc length along the curved row** so spacing stays even where the face turns away, with slight jitter in row height and along the row. The spacing `d` is iterated (5 passes, `d *= sqrt(count/target)`) so the sample count lands on the target instead of being clipped or padded. Points are then dropped by a probability field — sparse in the sockets, nostrils, philtrum and hollows, dense on the features — and removed from the lip gap, the hair band and the last sliver inside the silhouette. That is how the reference shades by dot density without a single drawn line.
+4. **Secondary groups**, each a small deliberate row builder rather than a scatter:
+   - **Hair:** five arcs offset outward from the silhouette (`0.013 + k*0.026`) with a two-frequency wobble, each starting higher up so the outer strands sit above the crown. Face drones inside the band are removed so the hair does not double up.
+   - **Ears:** two flattened rings per side, just outside the head, with the outward normal tilted.
+   - **Eyes:** upper and lower lid curves (plus a brow-adjacent row), an outer arc, an iris ring and an inner ring clipped to the lid opening, and one bright catchlight. Lid points carry the blink vector toward the closed line, which is what the self-test measures.
+   - **Brows:** two rows per side along a shallow arc. **Nose:** a bridge row, the tip, nostril rings and wings. **Lips:** six rows between the lip profiles, with the cupid's-bow peaks picked out brighter.
+5. Each point stores attributes: `position`, `normal` (from the surface gradient), `group` (0 skin, 1 accent, 3 mouth; 2 and 4 are unused slots kept in the shader), `shade` (relief x density x per-drone variation), `aMouthOpen` / `aMouthWide` (per-point lip displacement at full open / full wide), `aBlink` (per-point lid displacement at full blink), `seed`, `reserve`.
 
 **Mouth region.** Points within an elliptical region around the lips get `mouthWeight` greater than 0. Weight is 1 at the lower lip and jaw, falling smoothly to 0 at the mouth boundary. Upper lip has a small weight so the mouth opens mostly by jaw drop.
 
 **Drone counts (defaults)**
 
-| Group | Count |
-| --- | --- |
-| Face surface (density-shaded) | 2,240 |
-| Hair strands | 490 |
-| Eyes | 140 |
-| Total | about 2,870 |
+| Group | Target | Emitted |
+| --- | --- | --- |
+| Face surface (lattice, density-thinned) | 3,640 | about 3,030 |
+| Accent (hair arcs, ears, brows, lid rims) | 565 | about 710 |
+| Mouth group (rides the lips; drawn from face + lip rows) | — | about 185 |
+| Total | 4,205 targeted | **about 3,920** |
 
-About 28.5% of drones are marked `reserve` and stay hidden while dispersed, so the start screen shows ~50% and the formed face ~70% of the previous density. The total is a constant at the top of the file. A quality setting should scale it down on weak GPUs (see section 11).
+About 28.5% of drones are marked `reserve` and stay hidden while dispersed, so the start screen shows ~50% and the formed face ~70% of the previous density. `CONFIG.counts` holds the targets, `CONFIG.reducedCounts` the low-quality set (about 2,100), and the generator's spacing iteration is what actually decides the emitted count.
 
-**Design risk.** A procedural face can look generic or uncanny. Mitigation: build a small debug view (flat lit, no animation) early, and tune the relief parameters against `reference_image.png`. If the result is not good enough, the data source can be swapped for a mesh-sampled point set without changing anything else, because the rest of the system only consumes the `target` array.
+**Design risk.** A procedural face can look generic or uncanny. Mitigation: tune against `reference_image.png` (and `reference-image-notes.md` for the measured feature ratios the profile curves were fitted to), in a flat lit debug view before any animation. If the height field stops paying for itself, the data source can be swapped for a mesh-sampled point set without changing anything else, because the rest of the system only consumes the geometry's attribute arrays.
 
 ## 8. Animation
 
@@ -196,14 +197,22 @@ All motion is computed in the vertex shader from uniforms, so JavaScript only up
 
 **Known limitation.** Amplitude-plus-brightness sync gives a plausible "talking" feel but does not match specific sounds (for example, closed lips on "m" or "b", or tongue position on vowels). Viseme support is a future upgrade; the `setMouth` interface below is designed so a viseme driver can replace it later.
 
-**Ambient sound.** A quiet, looping ambient soundscape (a low hum with a soft shimmer, suggesting a drone swarm) plays after the first press of Start, and the user can turn it off and on at any time.
+**Background sound.** A quiet music bed runs under the demo from the first interaction until the tab is closed, and the user can mute it at any time with the sound toggle. It replaced a generated two-chord pad: the pad's oscillators were the whole of the ambient code in `main.js`, and they are gone — nothing in the page creates an oscillator any more.
 
-- **Source:** generated in the page with the Web Audio API — a soft, morphing two-chord pad of detuned oscillators with a slow filter sweep (no noise). No audio file is embedded, so the page stays offline and small. A short embedded loop is the fallback if the generated sound is not good enough.
-- **Start:** begins on the Start press (browsers require a user gesture) and fades in over about 2 seconds. It keeps playing through all states, with a gentle swell during `FORMING` and `DISPERSING`.
-- **Control:** the sound toggle (section 5) switches it off and on. Muting and unmuting use a gain ramp of about 0.3 seconds to avoid clicks. The default is on, and the choice is remembered between visits where the browser allows storage (guarded with try/catch).
-- **Ducking:** while `SPEAKING`, the ambient level drops by about 6 dB so speech stays clear, and returns over about 0.5 seconds after speech ends.
-- **Routing:** the ambient sound has its own gain node and does not pass through the lip-sync analyser, so it can never move the mouth.
-- **API:** `DroneFace.setAmbient(on)` and `DroneFace.ambient` (current state).
+- **Source:** `4ever-faded.mp3` (28 s loop, 96 kbps, 330 KB), embedded in the delivered file as a base64 data URI so it stays a single offline file. It lives in an `<audio>` element in `src/index.html`, outside the bundle, because the bundle is the face and the bed is staging.
+- **Start:** browsers require a user gesture for audible playback, so the page attempts it on load and otherwise starts on the first click or key press — in the demo flow, the Start press. Volume eases in over about 0.3 s.
+- **Control:** the sound toggle is the master mute; it is one flag (`soundOn`), persisted, mirrored by the bed. Muting and unmuting use a level ramp of about 0.3 seconds to avoid clicks. Default on.
+- **Ducking:** while `SPEAKING`, the bed drops to about 35% (`-9 dB`) on the `speechStart` event and returns on `speechEnd`, so speech stays clear.
+- **Routing:** the bed is a plain media element and never enters the lip-sync analyser, so it cannot move the mouth. The voice path (TTS buffer or `speechSynthesis`) is untouched by the sound toggle.
+- **API:** `DroneFace.setSound(on)` and `DroneFace.sound`. `setAmbient(on)` and `ambient` remain as deprecated aliases.
+
+**Voice paths and fallback.** Anything that makes the face talk must move the mouth, and must be able to say which path it took (`DroneFace.voiceStatus()`). A silent failure is the worst thing a demo like this can do, and it was the original bug: the TTS error was swallowed by a `catch` and the fallback had no voice to speak.
+
+1. `attachAudio`, `speakFromUrl`, or `speak` with a reachable endpoint → analyser-driven, i.e. the real lip sync described above.
+2. `speak` with an unreachable or unconfigured endpoint → the browser's `speechSynthesis`. The utterance gets 400 ms to fire `onstart`: a browser with no installed voices accepts `speak()` and then says nothing forever, and waiting for it is what left the face frozen.
+3. If it does not start → a synthetic envelope (the same driver the demo voice uses) runs for a duration estimated from the text length, so the face never stands still with its mouth shut. The status line and the console say in plain words that the movement is simulated and why.
+
+Whichever path runs, `speechStart`/`speechEnd` are emitted, so the music ducks the same way. `DroneFace.stop()` cuts all three paths — the playing buffer source, `speechSynthesis`, and the envelope. Disperse is not available while speaking, so a transition never has to interrupt a voice; when one is added it should call `stop()`.
 
 ## 11. Frontend integration API
 
@@ -217,12 +226,17 @@ window.DroneFace = {
   attachAudio(source),          // HTMLAudioElement | MediaStream | AudioBuffer
   speakFromUrl(url),            // complete audio file: fetch, decode, play with lip sync
   speak(text),                  // TTS: POST text to the endpoint, decode, play with lip sync
+  stop(),                       // cut any voice: TTS playback, speechSynthesis, or the simulated envelope
   setEndpoint(url),             // TTS endpoint (qwen3-tts style); persisted in localStorage
   setVoice(name),               // TTS voice name
-  attachStream(),               // streaming hook: returns { push(chunk), end() } (stub in v1)
+  setModel(name),               // served model name, for OpenAI-compatible endpoints
+  attachStream(),               // streaming sink: { push(chunk), end(), stop() } — feeds the same analyser
   setMouth(open, width),        // manual override, 0..1 each (width optional; for testing or other drivers)
-  setAmbient(on),               // ambient sound on/off (same as the sound toggle)
-  ambient,                      // current ambient state (boolean)
+  setSound(on),                 // master sound on/off: the music bed (never the voice)
+  sound,                        // current sound state (boolean)
+  voiceStatus(),                // what the last speak() did: {mode, detail, endpoint, voice, model, open, width, audioActive, synthVoice}
+  setAmbient(on),               // deprecated alias for setSound
+  ambient,                      // deprecated alias for sound
   setOrientationLimits({yaw, pitch}),
   on(event, handler)            // 'stateChange', 'speechStart', 'speechEnd'
 }
@@ -230,22 +244,37 @@ window.DroneFace = {
 
 **TTS backend contract (implemented in v1).**
 
-- `speak(text)` POSTs text to a configurable qwen3-tts style endpoint: `POST <endpoint> {"text":"…","voice":"…","response_format":"wav"}`. The request shape is centralised in one function (`requestTTS`) so it is the only place to change if the server wants a different body or path.
-- The response is accepted as an audio body (`audio/wav|mpeg|ogg`) or as JSON with a base64/`audio`/`data` field, decoded with `decodeAudioData`. If the call fails for any reason, the page falls back to the browser's `speechSynthesis` so it stays demoable offline.
-- The service may also return audio as a stream (for example, chunks over a WebSocket). This choice is not made yet. The frontend accepts both through one interface: files go through `attachAudio`, `speakFromUrl` or `speak`, streams through `attachStream`. All feed the same analyser, so the lip-sync code does not change.
-- v1 builds and tests complete-file playback. Streaming playback (an `AudioWorklet` fed with PCM chunks is the suggested method) is a follow-up task once the backend choice is made.
+- `speak(text)` POSTs to a configurable endpoint and the request shape is chosen from the URL, because two formats are in the wild and both turn up at Dell demos:
+  - an OpenAI-compatible URL (matches `/audio/speech` or a bare `/v1`) gets `POST {"model":"…","input":"…","voice":"…","response_format":"wav"}` — what vLLM and the qwen3-tts deployments that speak that API expect;
+  - any other URL gets the original shape, `POST {"text":"…","voice":"…","response_format":"wav"}`.
+  Both are decided in one function (`requestTTS`), so it remains the only place to change.
+- The response is accepted as an audio body (`audio/wav|mpeg|ogg`) or as JSON with a base64 field (`output.audio`, `audio_base64`, `audio`, `data`, `b64`), decoded with `decodeAudioData`.
+- Failure is never silent: the reason is logged (`console.warn`) and carried in `voiceStatus().detail`, and the fallback chain in section 10 keeps the face talking. `decodeAudioData` detaches the buffer it is given, so the size is read before decoding.
+- **Known-good deployment, verified from the lab box.** vllm-omni serving `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` as model `qwen3-tts` on port 8091 (`127.0.0.1`, `172.22.0.1`, `172.17.0.1`). `POST /v1/audio/speech {"model":"qwen3-tts","input":"…","voice":"…","response_format":"wav"}` returns 200 `audio/wav`, 24 kHz mono 16-bit, about 0.9 s for a short sentence, with `access-control-allow-origin: *` and a working `OPTIONS` preflight — so the page can call it from `file://` or any port. Voices the server accepts: `default`, `aiden`, `dylan`, `eric`, `ono_anna`, `ryan`, `serena`, `sohee`, `uncle_fu`, `vivian`; a wrong name gives 400 with that list, which the status line now shows verbatim. `CONFIG.tts` holds these values and seeds the endpoint on first load only, so the panel and `?endpoint=` always win.
+- **Streaming playback (implemented, v1.1).** `speak(text)` against an OpenAI-compatible endpoint asks for `stream: true` with `response_format: "pcm"`, and the answer is `text/event-stream`:
+  - `event: speech.audio.delta` / `data: {"type":"speech.audio.delta","audio":"<base64 s16le mono>","response_format":"pcm"}` — chunks of raw PCM, typically about a second of audio each.
+  - `event: speech.audio.done` / `data: {"type":"speech.audio.done","usage":{…}}` — end of utterance.
+  Chunks are decoded to `Float32Array`, wrapped in an `AudioBuffer` at 24 kHz mono (`CONFIG.tts.pcmRate`, verified against the same sentence requested as a WAV), and scheduled back-to-back on `BufferSourceNode`s connected to the same analyser, so lip sync sees the stream exactly as it sees a file. Scheduling uses a running cursor clamped to `max(cursor, currentTime + 5 ms)`: if a chunk lands late the next one starts now rather than in the past (a brief gap, no glitch, no drift). `speechStart` fires on the first chunk, `speechEnd` when the last scheduled node ends — so the mouth is moving about 120 ms after the click instead of 2 s, and the music ducks then too.
+  The SSE parser is fed arbitrary byte chunks and must reassemble events split across them (an event boundary can land in the middle of a base64 payload), tolerating `data:` with or without a space and CRLF line endings. It is a pure function and is unit-tested on its own, because a parser that silently drops a chunk sounds like a broken speaker rather than a bug.
+  `attachStream()` returns this same sink — `{ push(chunk), end(), stop() }`, accepting `Int16Array`, `Float32Array` or `ArrayBuffer` — so a WebSocket or gRPC backend can feed the face without touching the face code.
+  If streaming is refused (not an event-stream, HTTP error, no `stream` support) the utterance is re-requested as a complete file, and the existing fallback chain follows. An explicit stop aborts the in-flight fetch and stops every scheduled node.
+  Measured against the lab box, click to first mouth movement is **about 1.05 s**, down from about 2.0 s buffered. Where the time goes: the server flushes a first delta of only ~80 ms of audio at ~90 ms (near-silent onset), then holds roughly a second while it builds the next 2 s chunk — so the page is ready to talk and starving. Scheduling and analysis are not the bottleneck: a chunk pushed straight into the sink reaches the analyser within 20 ms. If the server can be made to send a 300 ms first chunk, this becomes ~0.2 s without touching the frontend.
+- **Voice list from the server.** `GET {origin}/v1/audio/voices` returns `{"voices":[…],"uploaded_voices":[…]}`; the settings panel populates its suggestions from there when the endpoint answers (replacing a trailing `/audio/speech` with `/audio/voices`), and falls back to the list in `CONFIG.tts` when it does not. The status line says how many voices it found and where from.
+- The service may also return audio as a stream over another transport (for example, chunks over a WebSocket). The frontend accepts both through one interface: files go through `attachAudio`, `speakFromUrl` or `speak`, streams through `attachStream`. All feed the same analyser, so the lip-sync code does not change.
 
-**v1 test harness.** The **Generate voice** button and `DroneFace.setMouth(open, width)` let the mouth be tested without a backend. A file-picker button (shown only with `?debug=1` in the URL) for loading a local audio file is recommended.
+**Voice settings control.** A slider control sits beside the text box and opens a panel with the endpoint URL, model name and voice name, persisted in `localStorage`, plus a status line naming the mode (`TTS endpoint`, `TTS stream`, `browser voice`, `simulated`) and the last result. The voices the endpoint reports are shown as chips; clicking one selects it and speaks a sample line, so auditioning nine voices is nine clicks. `?endpoint=…&model=…&voice=…` seeds all three from the URL, so a room can be configured without opening devtools.
+
+**v1 test harness.** The **Generate voice** button and `DroneFace.setMouth(open, width)` let the mouth be tested without a backend. A file-picker button (shown only with `?debug=1` in the URL) for loading a local audio file is recommended. `tools/voice-paths-check.mjs` serves the repo plus three fake TTS endpoints (legacy shape, OpenAI shape, 404), drives the built page over CDP, and asserts that each path moves the mouth and reports itself honestly.
 
 ## 12. Performance and compatibility
 
 | Item | Target |
 | --- | --- |
 | Frame rate | 60 fps on a mid-range laptop with integrated graphics; 30 fps minimum on a recent phone |
-| Drone count | About 2,870 default; auto-reduce to about 1,450 if the first 60 frames average under 40 fps |
+| Drone count | About 3,920 default (4,205 targeted); auto-reduce to about 2,100 if the first 60 frames average under 40 fps |
 | Device pixel ratio | Capped at 2 |
 | Browsers | Current Chrome, Edge, Firefox, Safari (WebGL2) |
-| File size | Under about 500 KB total |
+| File size | Under about 500 KB of code, plus about 450 KB of base64 for the embedded music track (roughly 950 KB delivered) |
 | Startup | Interactive Start button within 1 s of load; face data generation under 300 ms |
 
 Other requirements:
@@ -273,29 +302,36 @@ The delivered `drone-face.html` is organised as:
    - TTS client (`requestTTS`)
    - public `DroneFace` API
    - render loop
+5. `<script>`: background music bed — an `<audio>` element with the track embedded as a base64 data URI, plus the level envelope, ducking and the mirror of the sound flag. It sits outside the bundle and talks to the app only through the public API and `on(event, cb)` seam, so it survives any rebuild of `src/main.js` and can be injected into an already-built file with `tools/inject-music.mjs` (and the retired chord stripped with `tools/remove-chord.mjs`).
 
 The repo lives in `droneface-spec/` (this directory), alongside this spec and `reference_image.png`. Development is a clean-room rebuild: the earlier `~/projects/droneface` (Canvas 2D) and `~/projects/droneface-ds` (three.js) prototypes are reference material only, not code to port from. Source lives in `src/` with a `build.js` that produces the single file. The built file is the deliverable.
 
 **Testing.** A headless self-test (`tools/selftest.html`, loaded over a local HTTP server and run in headless Chromium) asserts the state machine, formation accuracy, face geometry (eye/nose/mouth centroids, blink squash, jaw drop), the TTS wire format against a fake `fetch`, and the lip-sync DSP against a synthetic speech envelope fed through a fake `AnalyserNode` — no audio device or TTS server needed.
 
+Two checks run against a real browser and a real renderer rather than a simulated analyser (`tools/voice-paths-check.mjs`, `npm run check:voice`; `tools/sound-behaviour-check.mjs`, `npm run check:sound`). They drive the built file with real mouse gestures over CDP and cover the paths a simulated analyser cannot: every voice fallback must move the mouth, an unreachable TTS server must not stop the mouth, and the music bed must duck without ever touching the voice.
+
+Because the swarm shimmers constantly, a single before/after screenshot proves nothing — pixels change with or without the mouth moving. The mouth check therefore compares a closed-then-open pair against two same-state pairs captured at the same interval, and requires the transition to stand out from the drift. It also reads the shader uniform values directly. This exists because a build once passed every JavaScript-level lip-sync assertion while the face sat stone still on screen: the animation variables were computed correctly and never assigned to `uMouthOpen`/`uLipWidth`, so nothing reached the GPU. Numbers moving is not the same as the mouth moving.
+
 ## 14. Acceptance criteria
 
 1. Opening the file offline in a browser shows drones drifting slowly on a dark background with a centred Start button.
-2. Pressing Start moves every drone smoothly into a recognisable 3D face within about 5 seconds, with no visible jumps. The face is turquoise and the hair is bottle green.
+2. Pressing Start moves every drone smoothly into a recognisable 3D face within about 5 seconds, with no visible jumps. The face is turquoise and the accent drones (hair, brows, lid rims) are lavender.
 3. The face fills most of the viewport height on desktop and on a phone in portrait.
 4. Dragging turns the face left, right, up and down within the set limits, never showing the back of the head, and feels smooth.
-5. The face looks like a swarm of points: individual drones are visible, with bright edges, a clearly defined nose, lips and cheekbones, and a sparser hair band.
+5. The face looks like a swarm of points: individual drones are visible, with bright edges, a clearly defined nose, lips, brows and cheekbones, and hair strands that follow the silhouette rather than a cap.
 6. Calling `DroneFace.attachAudio` with an audio element makes the mouth open and close in time with the loudness of the audio, with no more than about 100 ms of visible lag, and the lips widen on sibilants.
-7. `DroneFace.setMouth(0..1, 0..1)` moves the mouth from closed to fully open and the lip width from relaxed to wide.
+7. `DroneFace.setMouth(0..1, 0..1)` moves the mouth from closed to fully open and the lip width from relaxed to wide, **visibly on screen** — measured against the shader uniform and by screenshot, not only by the JavaScript value behind it.
 8. The file works with no network connection.
 9. Resizing the window does not break the layout.
 10. Pressing Disperse (when not speaking) returns the drones to slow random flight within about 4 seconds with no jumps, and Reform rebuilds the face. Ten consecutive cycles show no drift, stuck drones or frame-rate decline.
 11. The face looks generic and neutral, not like a specific person.
 12. A streaming entry point (`attachStream`) exists alongside the file path, so the later backend choice needs no change to the face code.
-13. Ambient sound starts after Start, can be turned off and on with the toggle without clicks, ducks while speech plays, and never moves the mouth.
+13. The sound toggle mutes and unmutes the background music without clicks or hum, ducks while speech plays, returns afterwards, and never moves the mouth. Nothing in the page constructs an oscillator.
 14. The headless self-test (`tools/selftest.html`) passes all assertions.
 15. The eyes blink while the face is formed (`ACTIVE` and `SPEAKING`).
-16. `DroneFace.speak(text)` POSTs to the configured endpoint, plays the returned audio with lip sync, and falls back to `speechSynthesis` when the call fails.
+16. `DroneFace.speak(text)` POSTs to the configured endpoint, plays the returned audio with lip sync, and never leaves the mouth still: an unreachable or unconfigured endpoint falls back to `speechSynthesis` and then to a simulated envelope, and `voiceStatus()` says which one ran.
+17. The background track is audible from the first interaction after load, loops continuously, ducks while the face speaks, is silenced by the sound toggle, and never masks the voice.
+18. `DroneFace.stop()` silences any voice path within one frame and the mouth closes; a 404 from the endpoint is reported in the status line and on the console.
 
 ## 15. Suggested milestones
 
@@ -316,16 +352,18 @@ The repo lives in `droneface-spec/` (this directory), alongside this spec and `r
 - Single static face with a generic, neutral look (decided); the generator parameters are exposed as constants so the look can be tuned.
 - The face looks forward by default, with no eye tracking of the mouse.
 - All on-screen text is English: Start, Reform, Disperse and the sound toggle's label.
-- Ambient sound starts on the Start press and is on by default; the sound toggle is available in every state.
+- Sound starts on the first interaction (the Start press) and is on by default; the sound toggle is available in every state and is the only sound control.
 - Disperse is offered through a small control while the face is active and is unavailable while speaking; the centred button reads Reform after a dispersal. Both can be changed.
-- Only the hair band is bottle green; the face is turquoise. There is no neck/shoulders group (removed) and no separate ears.
+- The accent group (hair, brows, lid rims, lip peaks) is lavender by default and the face is turquoise; `?accent=` switches the accent. There is no neck/shoulders group and no separate eye group: ears, brows and lid rims share the accent group.
 - Mouth movement and eye blinks are the only animated facial features in v1 (blinks move/dim the eyelid drones every 3 to 6 seconds while the face is formed).
 - The TTS request shape (`POST {"text","voice","response_format":"wav"}`) is a guess at a qwen3-tts style server and is isolated in `requestTTS`; the endpoint and voice are configurable at runtime and the page falls back to `speechSynthesis` offline.
 - The **Generate voice** button speaks through the browser's `speechSynthesis` as a demo voice (mouth driven by a synthetic speech envelope); once a TTS endpoint is configured via `setEndpoint`, `speak` uses real audio and amplitude lip sync instead.
+- Background music is `4ever-faded.mp3` (28 s, 96 kbps, ~330 KB), embedded in the delivered file as a data URI to keep the single-file property. Browsers will not start audible audio without a user gesture, so the page attempts playback on load and otherwise starts it on the first click or key press — in the demo flow that is the Start button.
+- The generated chord pad is removed rather than muted: with a real music track under the voice, two ambient layers was one too many, and the pad made the sound toggle ambiguous. `setAmbient`/`ambient` stay as aliases so older callers and the self-test keep working.
 
 ## 17. Decisions and open questions
 
-**Settled:** the face has a generic, neutral look; the swarm can disperse and re-form; the face is turquoise and the hair bottle green; ambient sound is included, with an on/off control; the frontend calls a configurable qwen3-tts style endpoint with an offline `speechSynthesis` fallback; amplitude-and-brightness lip sync (adaptive gain plus sibilant-driven lip width); eye blinks are in v1.
+**Settled:** the face has a generic, neutral look; the swarm can disperse and re-form; the face is turquoise with a lavender accent; a looping music bed plays under the demo with one mute that leaves the voice alone; the generated chord pad is out; the frontend calls a configurable qwen3-tts style endpoint (OpenAI-compatible body when the URL looks like `/v1/audio/speech`) with an offline fallback chain that always moves the mouth; amplitude-and-brightness lip sync (adaptive gain plus sibilant-driven lip width); eye blinks are in v1.
 
 **Still open:**
 
@@ -334,7 +372,6 @@ The repo lives in `droneface-spec/` (this directory), alongside this spec and `r
 ## 18. Future work
 
 - Viseme-based lip sync driven by phoneme timing from the TTS service.
-- Streaming audio playback, if the backend streams.
 - Eyebrow motion, emotional expressions, and head nods.
 - Eye gaze following the mouse or a target.
 - Alternative faces by sampling a mesh into the same point format.

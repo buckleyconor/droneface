@@ -27,10 +27,9 @@ async function main() {
 
   // ---- geometry ----
   const counts = T.getCounts();
-  assert('total drones ~2870', counts.total >= 2500 && counts.total <= 3100);
-  assert('face + mouth ~2240', counts.face + counts.mouth >= 1900 && counts.face + counts.mouth <= 2400);
-  assert('hair ~490', counts.hair >= 420 && counts.hair <= 560);
-  assert('eyes = 140', counts.eye === 140);
+  assert('total drones ~3,900', counts.total >= 3650 && counts.total <= 4150);
+  assert('face + mouth ~3,200', counts.face + counts.mouth >= 2950 && counts.face + counts.mouth <= 3450);
+  assert('hair ~700', counts.hair >= 620 && counts.hair <= 800);
   assert('no neck group', counts.neck === 0);
   assert('reserve ~28%', counts.reserve >= counts.total * 0.20 && counts.reserve <= counts.total * 0.38);
   assert('mouth group populated', counts.mouth > 30);
@@ -42,8 +41,9 @@ async function main() {
   assert('nose tip below centre (y < -0.2)', gs.noseTip.y < -0.2);
   assert('jaw-drop displacement present', gs.jawDropMax > 0.05);
   assert('blink displacement present', gs.blinkMax > 0.03);
-  assert('left eye cluster', gs.eyeXs.filter((x) => x < -0.2).length > 50);
-  assert('right eye cluster', gs.eyeXs.filter((x) => x > 0.2).length > 50);
+  assert('lid points carry the blink (> 120)', gs.eyeXs.length > 120);
+  assert('left eye cluster', gs.eyeXs.filter((x) => x < -0.2).length > 40);
+  assert('right eye cluster', gs.eyeXs.filter((x) => x > 0.2).length > 40);
 
   // ---- state machine ----
   assert('initial state idle', T.getState() === 'idle');
@@ -147,9 +147,97 @@ async function main() {
   };
   DF.setEndpoint('http://tts.test/api');
   const buf = await T.requestTTS('hello world');
-  w.fetch = realFetch;
   assert('TTS POSTs JSON body', captured && captured.opts.method === 'POST' && captured.opts.body === JSON.stringify({ text: 'hello world', voice: 'default', response_format: 'wav' }));
   assert('TTS decodes base64 audio', buf && buf.byteLength === 3);
+
+  // an OpenAI-compatible URL (vLLM, qwen3-tts deployments) takes the other shape
+  DF.setEndpoint('http://tts.test/v1/audio/speech');
+  DF.setModel('qwen3-tts');
+  DF.setVoice('fresh');
+  await T.requestTTS('say this');
+  const oa = JSON.parse(captured.opts.body);
+  assert('OpenAI endpoint sends {model,input,voice}',
+    oa.model === 'qwen3-tts' && oa.input === 'say this' && oa.voice === 'fresh' && !('text' in oa));
+  w.fetch = realFetch;
+
+  // ---- voice fallback: a dead endpoint must still move the mouth, and say so ----
+  // Under --dump-dom the rAF loop does not run, so real time is waited (for the fetch
+  // rejection and the speechSynthesis guard) and frames are pumped by hand.
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const pump = async (frames, dt) => { for (let i = 0; i < frames; i++) { T.tick(dt); await sleep(4); } };
+  DF.setEndpoint('http://127.0.0.1:1/tts');   // nothing can be listening on port 1
+  DF.speak('the quick brown fox jumps over the lazy dog, and keeps going a while');
+  let fallbackPeak = 0;
+  for (let i = 0; i < 12; i++) { await pump(4, 0.05); fallbackPeak = Math.max(fallbackPeak, T.getMouth().open); }
+  assert('unreachable TTS still moves the mouth', fallbackPeak > 0.25);
+  const vs = DF.voiceStatus();
+  assert('status reports the fallback', vs.mode === 'simulated' && /no voice available/.test(vs.detail) && /127\.0\.0\.1|could not reach|connect/.test(vs.detail));
+  DF.stop();
+  await pump(30, 0.05);
+  assert('stop() closes the mouth', T.getMouth().open < 0.1 && DF.voiceStatus().synthVoice === false);
+
+  // ---- SSE parser: chunks can split anywhere, including inside a base64 payload ----
+  const sse = [];
+  const feed = T.parseSSE((name, data) => sse.push([name, data]));
+  const doc = 'event: speech.audio.delta\ndata: {"type":"speech.audio.delta","audio":"AAAA"}\n\n' +
+    'event: speech.audio.done\ndata: {"type":"speech.audio.done","usage":{}}\n\n';
+  for (let i = 0; i < doc.length; i++) feed(doc[i]);           // one character at a time
+  assert('SSE parser survives 1-byte chunks', sse.length === 2 &&
+    sse[0][0] === 'speech.audio.delta' && sse[1][0] === 'speech.audio.done' &&
+    sse[0][1] === doc.split('\n')[1].slice(6), JSON.stringify(sse.map((x) => x[0])));
+
+  const sse2 = [];
+  const feed2 = T.parseSSE((name, data) => sse2.push([name, data]));
+  const crlf = 'event: speech.audio.delta\r\ndata: {"a":1}\r\n\r\nevent: speech.audio.done\r\ndata: {"b":2}\r\n\r\n';
+  feed2(crlf.slice(0, 25)); feed2(crlf.slice(25, 27)); feed2(crlf.slice(27)); feed2.flush();  // split inside the CRLFCRLF
+  assert('SSE parser handles CRLF split across chunks', sse2.length === 2 && sse2[1][1] === '{"b":2}', JSON.stringify(sse2));
+
+  const noData = [];
+  const feed3 = T.parseSSE((n, d) => noData.push([n, d]));
+  feed3(': keep-alive\n\nevent: ping\n\ndata: {"x":1}\n\n');
+  assert('SSE parser ignores comments and data-less events', noData.length === 1 && noData[0][1] === '{"x":1}', JSON.stringify(noData));
+
+  const i16 = T.int16FromBase64(btoa(String.fromCharCode(0, 0, 0x00, 0x80, 0xff, 0x3f)));
+  assert('base64 decodes to little-endian s16', i16[0] === 0 && i16[1] === -32768 && i16[2] === 16383 && i16.length === 3,
+    JSON.stringify([...i16]));
+  assert('voices URL is derived from the endpoint',
+    T.voicesUrlFor('http://h:8091/v1/audio/speech') === 'http://h:8091/v1/audio/voices' &&
+    T.voicesUrlFor('http://h:8091/tts/speak') === 'http://h:8091/v1/audio/voices', T.voicesUrlFor('http://h:8091/tts/speak'));
+
+  // ---- streaming sink: schedule, play, stop ----
+  // Whether an AudioContext exists depends on how Chromium was launched: under
+  // --dump-dom there is none, so playback is asserted in check:voice and only the
+  // safe-degradation path can be asserted here.
+  const tone = (secs, amp) => { const n = (24000 * secs) | 0; const a = new Int16Array(n); for (let i = 0; i < n; i++) a[i] = Math.round(Math.sin(i * 0.08) * amp * 32767); return a; };
+  DF.stop();
+  const sink = T.getVoiceStream(24000);
+  const clockBefore = T.getAudioClock();
+  // let the real audio thread get moving before judging whether it renders at all
+  await new Promise((r) => setTimeout(r, 300));
+  let threw = null;
+  try {
+    sink.push(tone(0.4, 0.5));
+    await pump(6, 0.03);
+    let streamPeak = 0;
+    for (let i = 0; i < 8; i++) { sink.push(tone(0.25, 0.5)); await pump(4, 0.02); streamPeak = Math.max(streamPeak, T.getMouth().open); }
+    sink.end();
+    const clock = T.getAudioClock();
+    // an AudioContext that exists but never advances is what --dump-dom gives you:
+    // the graph is scheduled, the audio thread is not running. Assert what can run.
+    const renders = clock && clock.state === 'running' && clock.t - (clockBefore ? clockBefore.t : 0) > 0.05;
+    if (renders) {
+      assert('streamed PCM plays and moves the mouth',
+        streamPeak > 0.3 && DF.voiceStatus().audioActive === true && DF.getState() === 'speaking',
+        `${streamPeak} ${JSON.stringify(clock)}`);
+    } else {
+      assert('stream sink is safe when audio cannot render', DF.voiceStatus().audioActive === false, 'audio clock frozen: ' + JSON.stringify(clock));
+    }
+  } catch (e) {
+    threw = String((e && e.message) || e);
+    assert('stream sink did not throw', false, threw);
+  }
+  DF.stop();
+  assert('stop() silences a stream', DF.voiceStatus().audioActive === false, JSON.stringify(DF.voiceStatus()));
 
   render();
 }
